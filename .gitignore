@@ -1,0 +1,50 @@
+# Build output
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Runtime/private Mihomo data
+subscription.txt
+**/subscription.txt
+providers/
+**/providers/
+logs/
+**/logs/
+backups/
+**/backups/
+temp/
+**/temp/
+watchdog-state.json
+**/watchdog-state.json
+mode.txt
+**/mode.txt
+
+# Runtime configs (public repo uses sanitized examples only)
+config.yaml
+config.tun.yaml
+config.template.yaml
+**/config.yaml
+**/config.tun.yaml
+**/config.template.yaml
+
+# Mihomo binary / archives
+mihomo.exe
+**/mihomo.exe
+*.zip
+*.7z
+*.rar
+
+# Secrets / local environment
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Local audit / staging artifacts
+PUBLIC_REPO_AUDIT.txt
+STAGING_NOTES.txt
