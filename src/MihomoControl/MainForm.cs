@@ -389,25 +389,7 @@ public sealed class MainForm : Form
 
         serversLayout.Controls.Add(selectionBar, 0, 2);
 
-        _serversGrid.Dock = DockStyle.Fill;
-        _serversGrid.Margin = new Padding(0, 14, 0, 0);
-        _serversGrid.ReadOnly = true;
-        _serversGrid.AllowUserToAddRows = false;
-        _serversGrid.AllowUserToDeleteRows = false;
-        _serversGrid.AllowUserToResizeRows = false;
-        _serversGrid.MultiSelect = false;
-        _serversGrid.SelectionMode =
-            DataGridViewSelectionMode.FullRowSelect;
-        _serversGrid.RowHeadersVisible = false;
-        _serversGrid.AutoGenerateColumns = false;
-        _serversGrid.AutoSizeColumnsMode =
-            DataGridViewAutoSizeColumnsMode.Fill;
-        _serversGrid.ColumnHeadersHeight = 36;
-        _serversGrid.RowTemplate.Height = 32;
-        _serversGrid.CellBorderStyle =
-            DataGridViewCellBorderStyle.SingleHorizontal;
-        _serversGrid.BackgroundColor = SystemColors.Window;
-        _serversGrid.BorderStyle = BorderStyle.FixedSingle;
+        ConfigureDataGrid(_serversGrid);
 
         _serversGrid.Columns.Clear();
 
@@ -527,22 +509,7 @@ public sealed class MainForm : Form
 
         subscriptionsLayout.Controls.Add(providerToolbar, 0, 1);
 
-        _subscriptionsGrid.Dock = DockStyle.Fill;
-        _subscriptionsGrid.Margin = new Padding(0, 16, 0, 16);
-        _subscriptionsGrid.ReadOnly = true;
-        _subscriptionsGrid.AllowUserToAddRows = false;
-        _subscriptionsGrid.AllowUserToDeleteRows = false;
-        _subscriptionsGrid.AllowUserToResizeRows = false;
-        _subscriptionsGrid.MultiSelect = false;
-        _subscriptionsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-        _subscriptionsGrid.RowHeadersVisible = false;
-        _subscriptionsGrid.AutoGenerateColumns = false;
-        _subscriptionsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        _subscriptionsGrid.ColumnHeadersHeight = 36;
-        _subscriptionsGrid.RowTemplate.Height = 32;
-        _subscriptionsGrid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-        _subscriptionsGrid.BackgroundColor = SystemColors.Window;
-        _subscriptionsGrid.BorderStyle = BorderStyle.FixedSingle;
+        ConfigureDataGrid(_subscriptionsGrid);
         _subscriptionsGrid.ColumnHeadersDefaultCellStyle.Alignment =
             DataGridViewContentAlignment.MiddleCenter;
         _subscriptionsGrid.DefaultCellStyle.Alignment =
@@ -1004,6 +971,45 @@ public sealed class MainForm : Form
         };
     }
 
+    private static void ConfigureDataGrid(DataGridView grid)
+    {
+        grid.Dock = DockStyle.Fill;
+        grid.ReadOnly = true;
+        grid.AllowUserToAddRows = false;
+        grid.AllowUserToDeleteRows = false;
+        grid.AllowUserToResizeRows = false;
+        grid.MultiSelect = false;
+        grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        grid.RowHeadersVisible = false;
+        grid.AutoGenerateColumns = false;
+
+        grid.BackgroundColor = SystemColors.Window;
+        grid.BorderStyle = BorderStyle.FixedSingle;
+        grid.CellBorderStyle =
+            DataGridViewCellBorderStyle.SingleHorizontal;
+
+        grid.Font = new Font("Segoe UI", 10F);
+        grid.ColumnHeadersHeight = 38;
+        grid.RowTemplate.Height = 34;
+
+        grid.EnableHeadersVisualStyles = false;
+        grid.ColumnHeadersDefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleCenter;
+
+        grid.DefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleLeft;
+        grid.DefaultCellStyle.Padding =
+            new Padding(8, 0, 8, 0);
+
+        grid.AlternatingRowsDefaultCellStyle =
+            new DataGridViewCellStyle
+            {
+                BackColor = SystemColors.ControlLight
+            };
+
+        grid.SelectionMode =
+            DataGridViewSelectionMode.FullRowSelect;
+    }
     private static void ConfigureActionButton(
         Button button,
         string text,
@@ -3400,6 +3406,7 @@ rules:
         return trimmed.Length <= 500 ? trimmed : trimmed[..500] + "...";
     }
 }
+
 
 
 
