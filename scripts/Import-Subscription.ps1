@@ -95,7 +95,7 @@ function Test-UriList {
     if ($lines.Count -eq 0) { return $false }
 
     foreach ($line in $lines) {
-        if ($line -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://\S+$') {
+        if ($line -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://\S.*$') {
             return $false
         }
     }

@@ -71,6 +71,7 @@ public sealed class MainForm : Form
     private readonly Button _about = new();
 
     private string? _pendingText;
+    private bool _pendingImportValidated;
     private string? _validatedCandidatePath;
     private string? _validatedReleaseTag;
     private string? _validatedCandidateSha256;
@@ -631,6 +632,12 @@ public sealed class MainForm : Form
         _providerNameInput.PlaceholderText = "e.g. work, backup, mobile";
         _providerNameInput.Margin = new Padding(0, 2, 0, 0);
 
+        _providerNameInput.TextChanged += (_, _) =>
+        {
+            _pendingImportValidated = false;
+            _apply.Enabled = false;
+        };
+
         providerNameRow.Controls.Add(providerNameLabel, 0, 0);
         providerNameRow.Controls.Add(_providerNameInput, 1, 0);
         addProviderSection.Controls.Add(providerNameRow, 0, 2);
@@ -655,7 +662,7 @@ public sealed class MainForm : Form
             _paste,
             "Paste",
             110,
-            (_, _) => PasteInput());
+            async (_, _) => await PasteInputAsync());
 
         ConfigureActionButton(
             _test,
@@ -672,6 +679,9 @@ public sealed class MainForm : Form
         subscriptionActions.Controls.Add(_paste);
         subscriptionActions.Controls.Add(_test);
         subscriptionActions.Controls.Add(_apply);
+
+        _test.Enabled = false;
+        _apply.Enabled = false;
 
         addProviderSection.Controls.Add(subscriptionActions, 0, 4);
         subscriptionsLayout.Controls.Add(addProviderSection, 0, 3);
@@ -1916,19 +1926,140 @@ public sealed class MainForm : Form
         return "\"" + value.Replace("\"", "\\\"") + "\"";
     }
 
-    private void PasteInput()
+    private static string WriteImportTempFile(string text)
+    {
+        string dir = Path.Combine(
+            Path.GetTempPath(),
+            "MihomoControl",
+            "imports");
+
+        Directory.CreateDirectory(dir);
+
+        string path = Path.Combine(
+            dir,
+            $"provider-{Guid.NewGuid():N}.txt");
+
+        File.WriteAllText(
+            path,
+            text,
+            new UTF8Encoding(false));
+
+        return path;
+    }
+
+    private string GetProviderNameForImport()
+    {
+        string providerName = _providerNameInput.Text.Trim();
+
+        if (string.IsNullOrWhiteSpace(providerName))
+            throw new InvalidOperationException(
+                "Enter a provider name first.");
+
+        if (!Regex.IsMatch(providerName, @"^[A-Za-z0-9._-]+$"))
+            throw new InvalidOperationException(
+                "Provider name may contain only letters, digits, dot, underscore and hyphen.");
+
+        return providerName;
+    }
+
+    private async Task PasteInputAsync()
     {
         if (!Clipboard.ContainsText())
         {
-            MessageBox.Show("Clipboard does not contain text.");
+            MessageBox.Show(
+                "Clipboard does not contain text.",
+                "Add provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
             return;
         }
 
         _pendingText = Clipboard.GetText().Trim();
-        string type = DetectInputType(_pendingText);
-        _subscriptionInfo.Text = $"Detected: {type}";
+        _pendingImportValidated = false;
         _apply.Enabled = false;
-        _test.Enabled = true;
+
+        if (string.IsNullOrWhiteSpace(_pendingText))
+        {
+            _subscriptionInfo.Text = "Clipboard text is empty";
+            return;
+        }
+
+        string? inputFile = null;
+
+        SetBusy(true, "Detecting provider source...");
+
+        try
+        {
+            inputFile = WriteImportTempFile(_pendingText);
+
+            using var doc =
+                await RunImportSubscriptionActionAsync(
+                    "Detect",
+                    "subscription",
+                    inputFile);
+
+            var root = doc.RootElement;
+
+            bool success =
+                root.TryGetProperty("success", out var successElement) &&
+                successElement.ValueKind == JsonValueKind.True;
+
+            string message =
+                root.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString() ?? "Detection finished."
+                    : "Detection finished.";
+
+            string display =
+                root.TryGetProperty("display", out var displayElement)
+                    ? displayElement.GetString() ?? ""
+                    : "";
+
+            string sourceType =
+                root.TryGetProperty("source_type", out var typeElement)
+                    ? typeElement.GetString() ?? ""
+                    : "";
+
+            if (!success)
+            {
+                _subscriptionInfo.Text = message;
+                return;
+            }
+
+            string description =
+                !string.IsNullOrWhiteSpace(display)
+                    ? display
+                    : sourceType;
+
+            _subscriptionInfo.Text =
+                string.IsNullOrWhiteSpace(description)
+                    ? "Source pasted — ready to test"
+                    : $"Source ready — {description}";
+        }
+        catch (Exception ex)
+        {
+            _subscriptionInfo.Text = "Source detection failed";
+
+            MessageBox.Show(
+                ex.Message,
+                "Add provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(inputFile))
+            {
+                try
+                {
+                    File.Delete(inputFile);
+                }
+                catch
+                {
+                }
+            }
+
+            SetBusy(false, "Ready");
+        }
     }
 
     private static string DetectInputType(string text)
@@ -1999,51 +2130,100 @@ public sealed class MainForm : Form
         if (string.IsNullOrWhiteSpace(_pendingText))
             return;
 
-        SetBusy(true, "Testing import...");
-
-        string runDir = Path.Combine(ValidationRoot, DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
+        string providerName;
 
         try
         {
-            var normalized = await NormalizeInputAsync(_pendingText);
-            int nodes = EstimateNodeCount(normalized.content);
-
-            Directory.CreateDirectory(runDir);
-            string tempProvider = Path.Combine(runDir, "provider.txt");
-            string tempConfig = Path.Combine(runDir, "config.yaml");
-
-            File.WriteAllText(tempProvider, normalized.content.Trim() + Environment.NewLine, Encoding.UTF8);
-            File.WriteAllText(tempConfig, BuildValidationConfig(tempProvider), Encoding.UTF8);
-
-            var result = await RunProcessCaptureAsync(
-                MihomoExe,
-                $"-t -d \"{BaseDir}\" -f \"{tempConfig}\"",
-                false);
-
-            if (result.exitCode != 0)
-            {
-                string details = string.IsNullOrWhiteSpace(result.stderr) ? result.stdout : result.stderr;
-                throw new InvalidOperationException("Mihomo validation failed.\n\n" + TrimForMessage(details));
-            }
-
-            _subscriptionInfo.Text =
-                $"Test PASS — normalized as {normalized.type}, approx. {nodes} node(s)";
-            _apply.Enabled = DetectInputType(_pendingText) == "Subscription URL";
+            providerName = GetProviderNameForImport();
         }
         catch (Exception ex)
         {
+            MessageBox.Show(
+                ex.Message,
+                "Test provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        string? inputFile = null;
+
+        _pendingImportValidated = false;
+        SetBusy(true, "Testing provider source...");
+
+        try
+        {
+            inputFile = WriteImportTempFile(_pendingText);
+
+            using var doc =
+                await RunImportSubscriptionActionAsync(
+                    "Test",
+                    providerName,
+                    inputFile);
+
+            var root = doc.RootElement;
+
+            bool success =
+                root.TryGetProperty("success", out var successElement) &&
+                successElement.ValueKind == JsonValueKind.True;
+
+            string message =
+                root.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString() ?? "Provider test finished."
+                    : "Provider test finished.";
+
+            string display =
+                root.TryGetProperty("display", out var displayElement)
+                    ? displayElement.GetString() ?? ""
+                    : "";
+
+            int? nodeCount = null;
+
+            if (root.TryGetProperty("node_count", out var countElement) &&
+                countElement.ValueKind == JsonValueKind.Number &&
+                countElement.TryGetInt32(out int count))
+            {
+                nodeCount = count;
+            }
+
+            if (!success)
+                throw new InvalidOperationException(message);
+
+            _pendingImportValidated = true;
+
+            string nodes =
+                nodeCount.HasValue
+                    ? $" · {nodeCount.Value} node(s)"
+                    : "";
+
+            _subscriptionInfo.Text =
+                string.IsNullOrWhiteSpace(display)
+                    ? $"Test PASS{nodes}"
+                    : $"Test PASS — {display}{nodes}";
+        }
+        catch (Exception ex)
+        {
+            _pendingImportValidated = false;
             _subscriptionInfo.Text = "Test FAIL";
-            _apply.Enabled = false;
-            MessageBox.Show(ex.Message, "Subscription test", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+            MessageBox.Show(
+                ex.Message,
+                "Test provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
         finally
         {
-            try
+            if (!string.IsNullOrWhiteSpace(inputFile))
             {
-                if (Directory.Exists(runDir))
-                    Directory.Delete(runDir, true);
+                try
+                {
+                    File.Delete(inputFile);
+                }
+                catch
+                {
+                }
             }
-            catch { }
 
             SetBusy(false, "Ready");
         }
@@ -3472,7 +3652,11 @@ rules:
             _testRollback.Enabled = candidateReady;
             _copyDiagnostics.Enabled = true;
             _about.Enabled = true;
+            _test.Enabled = !string.IsNullOrWhiteSpace(_pendingText);
+            _apply.Enabled = _pendingImportValidated && !string.IsNullOrWhiteSpace(_pendingText);
         }
+
+        _providerNameInput.Enabled = !busy;
 
         UseWaitCursor = busy;
     }
