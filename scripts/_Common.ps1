@@ -68,9 +68,12 @@ function Wait-ProviderReady([int]$TimeoutSeconds = 120) {
 
     do {
         try {
-            $p = (Get-SubscriptionProvider).providers.subscription
+            $providers = (Get-SubscriptionProvider).providers
 
-            if ($null -ne $p) {
+            foreach ($providerProp in $providers.PSObject.Properties) {
+                $p = $providerProp.Value
+                if ($null -eq $p) { continue }
+
                 $ready = @(
                     $p.proxies | Where-Object {
                         $_.alive -and
@@ -95,25 +98,31 @@ function Wait-ProviderReady([int]$TimeoutSeconds = 120) {
 }
 
 function Get-RankedCandidates {
-    $p = (Get-SubscriptionProvider).providers.subscription
-    if ($null -eq $p) { throw "Provider 'subscription' is not ready." }
+    $providers = (Get-SubscriptionProvider).providers
+    if ($null -eq $providers) { throw "No proxy providers are ready." }
 
-    $rows = foreach ($node in @($p.proxies)) {
-        if (-not $node.alive) { continue }
-        $history = @($node.history)
-        if ($history.Count -eq 0) { continue }
-        $last = $history[-1]
-        if ($null -eq $last.delay -or [int]$last.delay -le 0) { continue }
+    $rows = foreach ($providerProp in $providers.PSObject.Properties) {
+        $providerName = [string]$providerProp.Name
+        $p = $providerProp.Value
+        if ($null -eq $p) { continue }
 
-        [pscustomobject]@{
-            Name = [string]$node.name
-            Delay = [int]$last.delay
+        foreach ($node in @($p.proxies)) {
+            if (-not $node.alive) { continue }
+            $history = @($node.history)
+            if ($history.Count -eq 0) { continue }
+            $last = $history[-1]
+            if ($null -eq $last.delay -or [int]$last.delay -le 0) { continue }
+
+            [pscustomobject]@{
+                Provider = $providerName
+                Name     = [string]$node.name
+                Delay    = [int]$last.delay
+            }
         }
     }
 
     @($rows | Sort-Object Delay,Name)
 }
-
 function Test-ProxyEndpoint([string]$Url,[int]$TimeoutSeconds = 12) {
     & curl.exe -x $Proxy -I -sS -o NUL `
         --ssl-no-revoke `
@@ -270,54 +279,88 @@ function Set-MihomoMode {
     Set-Content -Path $ModeFile -Value $Mode -Encoding ASCII
 }
 
-$ModeFile = "C:\Mihomo\mode.txt"
 
-function Get-MihomoMode {
-    if (-not (Test-Path $ModeFile)) {
-        return "proxy"
+$ServerSelectionModeFile = Join-Path $Base "server-selection-mode.txt"
+$ManualServerFile = Join-Path $Base "manual-server.txt"
+
+function Get-ServerSelectionMode {
+    if (-not (Test-Path $ServerSelectionModeFile)) {
+        return "auto"
     }
 
-    $mode = (Get-Content $ModeFile -Raw).Trim().ToLowerInvariant()
+    $mode = (Get-Content $ServerSelectionModeFile -Raw).Trim().ToLowerInvariant()
 
-    if ($mode -notin @("proxy","tun","off")) {
-        return "off"
-    }
-
-    return $mode
-}
-
-function Set-MihomoMode {
-    param(
-        [Parameter(Mandatory=$true)]
-        [ValidateSet("proxy","tun","off")]
-        [string]$Mode
-    )
-
-    Set-Content -Path $ModeFile -Value $Mode -Encoding ASCII
-}
-
-$ModeFile = "C:\Mihomo\mode.txt"
-
-function Get-MihomoMode {
-    if (-not (Test-Path $ModeFile)) {
-        return "proxy"
-    }
-
-    $mode = (Get-Content $ModeFile -Raw).Trim().ToLowerInvariant()
-
-    if ($mode -notin @("proxy","tun","off")) {
-        return "off"
+    if ($mode -notin @("auto","manual")) {
+        return "auto"
     }
 
     return $mode
 }
 
-function Set-MihomoMode {
+function Set-ServerSelectionMode {
     param(
         [Parameter(Mandatory=$true)]
-        [ValidateSet("proxy","tun","off")]
+        [ValidateSet("auto","manual")]
         [string]$Mode
     )
 
-    Set-Content -Path $ModeFile -Value $Mode -Encoding ASCII
+    Set-Content -Path $ServerSelectionModeFile -Value $Mode -Encoding ASCII
+}
+
+function Get-ManualServer {
+    if (-not (Test-Path $ManualServerFile)) {
+        return $null
+    }
+
+    $name = (Get-Content $ManualServerFile -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        return $null
+    }
+
+    return $name
+}
+
+function Set-ManualServer {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Name
+    )
+
+    Set-Content -Path $ManualServerFile -Value $Name -Encoding UTF8
+}
+
+function Restore-ManualServerSelection {
+    if ((Get-ServerSelectionMode) -ne "manual") {
+        return $false
+    }
+
+    $name = Get-ManualServer
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        return $false
+    }
+
+    $auto = Get-AutoProxyInfo
+    $available = @($auto.all)
+
+    if ($name -notin $available) {
+        return $false
+    }
+
+    Set-AutoProxy $name
+    return $true
+}
+
+function Restart-MihomoForMode {
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateSet("proxy","tun")]
+        [string]$Mode
+    )
+
+    if ($Mode -eq "proxy") {
+        & (Join-Path $Base "scripts\Start-Mihomo.ps1") -Restart | Out-Null
+        return
+    }
+
+    Start-ScheduledTask -TaskName "Mihomo-TUN"
 }

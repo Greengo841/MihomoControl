@@ -1,9 +1,12 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Detect','Test','Apply','Update')]
+    [ValidateSet('Detect','Test','Apply','Update','Remove')]
     [string]$Action,
 
-    [string]$InputFile
+    [string]$InputFile,
+
+    [ValidatePattern('^[A-Za-z0-9._-]+$')]
+    [string]$ProviderName = 'subscription'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,10 +17,9 @@ $ConfigFiles = @(
     (Join-Path $BaseDir 'config.yaml'),
     (Join-Path $BaseDir 'config.tun.yaml')
 )
-$SubscriptionFile = Join-Path $BaseDir 'subscription.txt'
+$SubscriptionFile = Join-Path $BaseDir "$ProviderName.txt"
 $ProvidersDir = Join-Path $BaseDir 'providers'
-$LocalProviderFile = Join-Path $ProvidersDir 'subscription-local.txt'
-$ProviderName = 'subscription'
+$LocalProviderFile = Join-Path $ProvidersDir "$ProviderName-local.txt"
 
 function Write-JsonResult {
     param(
@@ -81,7 +83,7 @@ function Get-SafeUrlDisplay {
 function Get-MeaningfulLines {
     param([string]$Text)
     return @(
-        ($Text -split "`r?`n") |
+        ($Text -split '\r?\n') |
             ForEach-Object { $_.Trim() } |
             Where-Object { $_ -and -not $_.StartsWith('#') }
     )
@@ -118,7 +120,7 @@ function Extract-YamlProxiesBlock {
     param([string]$Text)
 
     $normalized = $Text.TrimStart([char]0xFEFF)
-    $lines = $normalized -split "`r?`n"
+    $lines = $normalized -split '\r?\n'
     $start = -1
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -404,16 +406,98 @@ function Escape-YamlDoubleQuoted {
     return $Value.Replace('\','\\').Replace('"','\"')
 }
 
+function Ensure-AutoUsesProvider {
+    param([string]$Text,[string]$ProviderName)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($Text -split '\r?\n')) { $lines.Add($line) }
+
+    $groups = -1
+    for ($i=0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^proxy-groups:\s*$') { $groups=$i; break }
+    }
+    if ($groups -lt 0) { throw 'proxy-groups section was not found.' }
+
+    $auto = -1
+    for ($i=$groups+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S') { break }
+        if ($lines[$i] -match '^\s{2}-\s+name:\s*AUTO\s*$') { $auto=$i; break }
+    }
+    if ($auto -lt 0) { throw 'AUTO proxy group was not found.' }
+
+    $groupEnd = $lines.Count
+    for ($i=$auto+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S' -or $lines[$i] -match '^\s{2}-\s+name:') { $groupEnd=$i; break }
+    }
+
+    $use = -1
+    for ($i=$auto+1; $i -lt $groupEnd; $i++) {
+        if ($lines[$i] -match '^\s{4}use:\s*$') { $use=$i; break }
+    }
+    if ($use -lt 0) { throw 'AUTO.use was not found.' }
+
+    $useEnd = $groupEnd
+    for ($i=$use+1; $i -lt $groupEnd; $i++) {
+        if ($lines[$i] -match '^\s{4}\S') { $useEnd=$i; break }
+    }
+
+    for ($i=$use+1; $i -lt $useEnd; $i++) {
+        if ($lines[$i].Trim() -eq "- $ProviderName") { return ($lines -join "`r`n") }
+    }
+
+    $lines.Insert($useEnd, "      - $ProviderName")
+    return ($lines -join "`r`n")
+}
+
+function Remove-AutoUsesProvider {
+    param([string]$Text,[string]$ProviderName)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($Text -split '\r?\n')) { $lines.Add($line) }
+
+    $groups = -1
+    for ($i=0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^proxy-groups:\s*$') { $groups=$i; break }
+    }
+    if ($groups -lt 0) { throw 'proxy-groups section was not found.' }
+
+    $auto = -1
+    for ($i=$groups+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S') { break }
+        if ($lines[$i] -match '^\s{2}-\s+name:\s*AUTO\s*$') { $auto=$i; break }
+    }
+    if ($auto -lt 0) { throw 'AUTO proxy group was not found.' }
+
+    $groupEnd = $lines.Count
+    for ($i=$auto+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S' -or $lines[$i] -match '^\s{2}-\s+name:') { $groupEnd=$i; break }
+    }
+
+    $use = -1
+    for ($i=$auto+1; $i -lt $groupEnd; $i++) {
+        if ($lines[$i] -match '^\s{4}use:\s*$') { $use=$i; break }
+    }
+    if ($use -lt 0) { throw 'AUTO.use was not found.' }
+
+    for ($i=$use+1; $i -lt $groupEnd; $i++) {
+        if ($lines[$i] -match '^\s{4}\S') { break }
+        if ($lines[$i].Trim() -eq "- $ProviderName") { $lines.RemoveAt($i); break }
+    }
+
+    return ($lines -join "`r`n")
+}
+
 function Set-SubscriptionProviderBlock {
     param(
         [string]$Text,
         [ValidateSet('http','file')][string]$ProviderType,
         [string]$Url,
-        [string]$Path
+        [string]$Path,
+        [string]$ProviderName
     )
 
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in ($Text -split "`r?`n", -1)) { $lines.Add($line) }
+    foreach ($line in ($Text -split '\r?\n')) { $lines.Add($line) }
 
     $root = -1
     for ($i=0; $i -lt $lines.Count; $i++) {
@@ -424,9 +508,35 @@ function Set-SubscriptionProviderBlock {
     $sub = -1
     for ($i=$root+1; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match '^\S') { break }
-        if ($lines[$i] -match '^  subscription:\s*$') { $sub=$i; break }
+        if ($lines[$i] -match ('^  ' + [regex]::Escape($ProviderName) + ':\s*$')) { $sub=$i; break }
     }
-    if ($sub -lt 0) { throw 'proxy-providers.subscription was not found.' }
+    if ($sub -lt 0) {
+        $sectionEnd = $lines.Count
+        for ($i=$root+1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\S') { $sectionEnd=$i; break }
+        }
+
+        $block = [System.Collections.Generic.List[string]]::new()
+        $block.Add("  ${ProviderName}:")
+        $block.Add("    type: $ProviderType")
+        if ($ProviderType -eq 'http') {
+            $escaped = Escape-YamlDoubleQuoted $Url
+            $block.Add("    url: `"$escaped`"")
+        }
+        $block.Add('    interval: 900')
+        $block.Add("    path: $Path")
+        $block.Add('    proxy: DIRECT')
+        $block.Add('    health-check:')
+        $block.Add('      enable: true')
+        $block.Add('      interval: 300')
+        $block.Add('      url: https://www.gstatic.com/generate_204')
+
+        for ($i=$block.Count-1; $i -ge 0; $i--) {
+            $lines.Insert($sectionEnd,$block[$i])
+        }
+
+        return Ensure-AutoUsesProvider -Text ($lines -join "`r`n") -ProviderName $ProviderName
+    }
 
     $end = $lines.Count
     for ($i=$sub+1; $i -lt $lines.Count; $i++) {
@@ -443,7 +553,7 @@ function Set-SubscriptionProviderBlock {
     }
 
     $replacement = [System.Collections.Generic.List[string]]::new()
-    $replacement.Add('  subscription:')
+    $replacement.Add("  ${ProviderName}:")
     $replacement.Add("    type: $ProviderType")
     if ($ProviderType -eq 'http') {
         $escaped = Escape-YamlDoubleQuoted $Url
@@ -457,7 +567,37 @@ function Set-SubscriptionProviderBlock {
     foreach ($line in $replacement) { $out.Add($line) }
     for ($i=$end; $i -lt $lines.Count; $i++) { $out.Add($lines[$i]) }
 
-    return ($out -join "`r`n")
+    return Ensure-AutoUsesProvider -Text ($out -join "`r`n") -ProviderName $ProviderName
+}
+
+function Remove-SubscriptionProviderBlock {
+    param([string]$Text,[string]$ProviderName)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($Text -split '\r?\n')) { $lines.Add($line) }
+
+    $root = -1
+    for ($i=0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^proxy-providers:\s*$') { $root=$i; break }
+    }
+    if ($root -lt 0) { throw 'proxy-providers section was not found.' }
+
+    $sub = -1
+    for ($i=$root+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S') { break }
+        if ($lines[$i] -match ('^  ' + [regex]::Escape($ProviderName) + ':\s*$')) { $sub=$i; break }
+    }
+
+    if ($sub -lt 0) { return Remove-AutoUsesProvider -Text $Text -ProviderName $ProviderName }
+
+    $end = $lines.Count
+    for ($i=$sub+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S' -or $lines[$i] -match '^  \S[^:]*:\s*$') { $end=$i; break }
+    }
+
+    for ($i=$end-1; $i -ge $sub; $i--) { $lines.RemoveAt($i) }
+
+    return Remove-AutoUsesProvider -Text ($lines -join "`r`n") -ProviderName $ProviderName
 }
 
 function Backup-CurrentState {
@@ -517,11 +657,11 @@ function Apply-Source {
     $backup = Backup-CurrentState
 
     try {
-        if ($Tested.SourceType -eq 'URL') {
+        if ($Tested.SourceType -eq 'URL' -and $Tested.RemoteContentType -notin @('URI','Base64')) {
             $url = $OriginalText.Trim()
             foreach ($cfg in $ConfigFiles) {
                 $old = [IO.File]::ReadAllText($cfg)
-                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType http -Url $url -Path './providers/subscription.yaml'
+                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType http -Url $url -Path "./providers/$ProviderName.yaml" -ProviderName $ProviderName
                 Write-Utf8NoBom $cfg $new
             }
             Write-Utf8NoBom $SubscriptionFile ($url + "`r`n")
@@ -529,10 +669,10 @@ function Apply-Source {
             Write-Utf8NoBom $LocalProviderFile $Tested.ProviderContent
             foreach ($cfg in $ConfigFiles) {
                 $old = [IO.File]::ReadAllText($cfg)
-                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType file -Url '' -Path './providers/subscription-local.txt'
+                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType file -Url '' -Path "./providers/$ProviderName-local.txt" -ProviderName $ProviderName
                 Write-Utf8NoBom $cfg $new
             }
-            Write-Utf8NoBom $SubscriptionFile ("file:providers/subscription-local.txt`r`n")
+            if ($Tested.SourceType -eq 'URL') { Write-Utf8NoBom $SubscriptionFile ($OriginalText.Trim() + "`r`n") } else { Write-Utf8NoBom $SubscriptionFile ("file:providers/$ProviderName-local.txt`r`n") }
         }
 
         foreach ($cfg in $ConfigFiles) {
@@ -549,6 +689,50 @@ function Apply-Source {
     }
 }
 
+function Remove-Source {
+    param([string]$ProviderName)
+
+    foreach ($cfg in $ConfigFiles) {
+        if (-not (Test-Path -LiteralPath $cfg)) {
+            throw "Required config was not found: $cfg"
+        }
+    }
+
+    $backup = Backup-CurrentState
+
+    try {
+        foreach ($cfg in $ConfigFiles) {
+            $old = [IO.File]::ReadAllText($cfg)
+            $new = Remove-SubscriptionProviderBlock -Text $old -ProviderName $ProviderName
+            Write-Utf8NoBom $cfg $new
+        }
+
+        $providerFiles = @(
+            (Join-Path $BaseDir "$ProviderName.txt"),
+            (Join-Path $ProvidersDir "$ProviderName.yaml"),
+            (Join-Path $ProvidersDir "$ProviderName-local.txt")
+        )
+
+        foreach ($file in $providerFiles) {
+            if (Test-Path -LiteralPath $file) {
+                Remove-Item -LiteralPath $file -Force
+            }
+        }
+
+        foreach ($cfg in $ConfigFiles) {
+            $result = Invoke-MihomoTest -ConfigFile $cfg -HomeDir $BaseDir
+            if (-not $result.Ok) {
+                throw "Mihomo rejected $([IO.Path]::GetFileName($cfg))."
+            }
+        }
+
+        return $backup.Path
+    }
+    catch {
+        Restore-Backup $backup
+        throw
+    }
+}
 function Invoke-ProviderUpdate {
     if (-not (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue)) {
         return [pscustomobject]@{ Success=$false; Message='Mihomo is stopped. Start Proxy or TUN first.'; NodeCount=$null }
@@ -607,6 +791,9 @@ try {
 
             $backupPath = Apply-Source -OriginalText $text -Tested $t
             Write-JsonResult -Success $true -Message 'Subscription source applied and both configs passed mihomo -t.' -SourceType $t.SourceType -Display $t.Display -NodeCount $t.NodeCount -RemoteContentType $t.RemoteContentType -RestartRequired $true -BackupPath $backupPath
+        }        'Remove' {
+            $backupPath = Remove-Source -ProviderName $ProviderName
+            Write-JsonResult -Success $true -Message 'Provider removed and both configs passed mihomo -t.' -SourceType 'Provider' -Display $ProviderName -BackupPath $backupPath
         }
 
         'Update' {

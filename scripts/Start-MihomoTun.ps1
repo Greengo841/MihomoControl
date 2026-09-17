@@ -1,4 +1,4 @@
-﻿. "C:\Mihomo\scripts\_Common.ps1"
+. "C:\Mihomo\scripts\_Common.ps1"
 
 Ensure-Layout
 
@@ -55,6 +55,8 @@ if (-not (Wait-LocalPort -Port 9090 -TimeoutSeconds 30)) {
     Stop-AllMihomoVerified
     throw "TUN Mihomo controller did not start."
 }
+
+try { Restore-ManualServerSelection | Out-Null } catch {}
 
 # The TUN adapter/route is created by the core. Keep the Windows System Proxy OFF.
 Set-SystemProxyOff

@@ -1,4 +1,4 @@
-﻿. "C:\Mihomo\scripts\_Common.ps1"
+. "C:\Mihomo\scripts\_Common.ps1"
 
 $expectedMode = "proxy"
 
@@ -38,6 +38,8 @@ try {
     if ((Get-MihomoMode) -ne $expectedMode) {
         exit 0
     }
+
+    try { Restore-ManualServerSelection | Out-Null } catch {}
 
     Set-SystemProxyOn
 

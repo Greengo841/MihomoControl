@@ -25,6 +25,17 @@ public sealed class MainForm : Form
     private const string LatestReleaseApi = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest";
     private const string CoreUpdateRoot = BaseDir + @"\temp\core-update";
 
+    private readonly TabControl _tabs = new();
+    private readonly TabPage _statusTab = new("Status");
+    private readonly TabPage _serversTab = new("Servers");
+    private readonly TabPage _subscriptionsTab = new("Subscriptions");
+    private readonly TabPage _maintenanceTab = new("Maintenance");
+    private readonly DataGridView _serversGrid = new();
+    private readonly Button _serversRefresh = new();
+    private readonly CheckBox _showOffline = new();
+    private readonly Button _autoServer = new();
+    private readonly Button _useSelectedServer = new();
+    private readonly Label _serverSelectionInfo = new();
     private readonly Label _modeValue = new();
     private readonly Label _processValue = new();
     private readonly Label _proxyValue = new();
@@ -47,6 +58,10 @@ public sealed class MainForm : Form
     private readonly Button _test = new();
     private readonly Button _apply = new();
     private readonly Button _updateNow = new();
+    private readonly DataGridView _subscriptionsGrid = new();
+    private readonly Button _subscriptionsRefresh = new();
+    private readonly Button _subscriptionUpdateSelected = new();
+    private readonly Button _subscriptionRemoveSelected = new();
     private readonly Button _checkCoreUpdate = new();
     private readonly Button _validateCandidate = new();
     private readonly Button _installValidated = new();
@@ -76,165 +91,816 @@ public sealed class MainForm : Form
             // Icon is cosmetic; never prevent the control UI from starting.
         }
 
+        SuspendLayout();
+
         StartPosition = FormStartPosition.CenterScreen;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
-        ClientSize = new Size(760, 790);
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
+        MinimumSize = new Size(900, 640);
+        ClientSize = new Size(1000, 720);
+        AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Segoe UI", 10F);
+        BackColor = SystemColors.Control;
 
-        AddStatusRow("Mode", _modeValue, 40);
-        AddStatusRow("Mihomo", _processValue, 70);
-        AddStatusRow("System proxy", _proxyValue, 100);
-        AddStatusRow("Active node", _nodeValue, 130);
-        AddStatusRow("Health", _healthValue, 160);
-        AddStatusRow("Watchdog", _watchdogValue, 195);
-
-        var modeGroup = new GroupBox
+        var root = new TableLayoutPanel
         {
-            Text = "Mode",
-            Location = new Point(350, 35),
-            Size = new Size(380, 120)
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
         };
-        Controls.Add(modeGroup);
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+        Controls.Add(root);
 
-        ConfigureButton(_proxyMode, "Proxy", 20, 35, modeGroup, async (_, _) => await SwitchModeAsync("proxy"));
-        ConfigureButton(_tunMode, "TUN", 135, 35, modeGroup, async (_, _) => await SwitchModeAsync("tun"));
-        ConfigureButton(_offMode, "Off", 250, 35, modeGroup, async (_, _) => await SwitchModeAsync("off"));
+        _tabs.Dock = DockStyle.Fill;
+        _tabs.Margin = new Padding(0);
+        _tabs.Padding = new Point(18, 6);
+        _tabs.TabPages.Clear();
 
-        _restart.Text = "Restart Proxy";
-        _restart.Size = new Size(150, 38);
-        _restart.Location = new Point(365, 175);
-        _restart.Click += async (_, _) => await RunScriptAsync("Start-Mihomo.ps1", false, "-Restart");
-        Controls.Add(_restart);
+        _tabs.TabPages.Add(_statusTab);
+        _tabs.TabPages.Add(_serversTab);
+        _tabs.TabPages.Add(_subscriptionsTab);
+        _tabs.TabPages.Add(_maintenanceTab);
 
-        _refresh.Text = "Refresh";
-        _refresh.Size = new Size(150, 38);
-        _refresh.Location = new Point(530, 175);
-        _refresh.Click += async (_, _) => await RefreshStateAsync();
-        Controls.Add(_refresh);
-
-        var subGroup = new GroupBox
+        foreach (TabPage page in _tabs.TabPages)
         {
-            Text = "Subscription / Config",
-            Location = new Point(24, 245),
-            Size = new Size(706, 170)
-        };
-        Controls.Add(subGroup);
+            page.Padding = new Padding(0);
+            page.UseVisualStyleBackColor = true;
+        }
 
-        _subscriptionInfo.Text = "No pending import";
-        _subscriptionInfo.AutoSize = false;
-        _subscriptionInfo.Location = new Point(18, 32);
-        _subscriptionInfo.Size = new Size(665, 45);
-        subGroup.Controls.Add(_subscriptionInfo);
+        root.Controls.Add(_tabs, 0, 0);
 
-        ConfigureButton(_paste, "Paste", 18, 92, subGroup, (_, _) => PasteInput());
-        ConfigureButton(_test, "Test", 138, 92, subGroup, async (_, _) => await TestPendingAsync());
-        ConfigureButton(_apply, "Apply", 258, 92, subGroup, async (_, _) => await ApplyPendingAsync());
-        ConfigureButton(_updateNow, "Update now", 378, 92, subGroup, async (_, _) => await UpdateProviderNowAsync());
-
-        var coreGroup = new GroupBox
+        var footer = new Panel
         {
-            Text = "Mihomo Core — stable channel",
-            Location = new Point(24, 435),
-            Size = new Size(706, 225)
+            Dock = DockStyle.Fill,
+            Padding = new Padding(18, 0, 18, 0),
+            BackColor = SystemColors.ControlLight
         };
-        Controls.Add(coreGroup);
-
-        var installedKey = new Label { Text = "Installed:", AutoSize = true, Location = new Point(18, 32) };
-        _installedVersion.Text = "—";
-        _installedVersion.AutoSize = true;
-        _installedVersion.Font = new Font("Segoe UI Semibold", 10F);
-        _installedVersion.Location = new Point(100, 32);
-
-        var latestKey = new Label { Text = "Latest stable:", AutoSize = true, Location = new Point(18, 62) };
-        _latestVersion.Text = "not checked";
-        _latestVersion.AutoSize = true;
-        _latestVersion.Font = new Font("Segoe UI Semibold", 10F);
-        _latestVersion.Location = new Point(120, 62);
-
-        _updateStatus.Text = "Run U2 validation before transactional U3 install";
-        _updateStatus.AutoSize = false;
-        _updateStatus.Size = new Size(495, 70);
-        _updateStatus.Location = new Point(18, 94);
-
-        _checkCoreUpdate.Text = "Check update";
-        _checkCoreUpdate.Size = new Size(145, 38);
-        _checkCoreUpdate.Location = new Point(535, 35);
-        _checkCoreUpdate.Click += async (_, _) => await CheckCoreUpdateAsync();
-
-        _validateCandidate.Text = "Download && validate";
-        _validateCandidate.Size = new Size(145, 38);
-        _validateCandidate.Location = new Point(535, 85);
-        _validateCandidate.Click += async (_, _) => await ValidateLatestCandidateAsync();
-
-        _installValidated.Text = "Install validated";
-        _installValidated.Size = new Size(145, 38);
-        _installValidated.Location = new Point(535, 135);
-        _installValidated.Enabled = false;
-        _installValidated.Click += async (_, _) => await InstallValidatedCandidateAsync(false);
-
-        _testRollback.Text = "Test rollback";
-        _testRollback.Size = new Size(145, 32);
-        _testRollback.Location = new Point(535, 180);
-        _testRollback.Enabled = false;
-        _testRollback.Click += async (_, _) => await InstallValidatedCandidateAsync(true);
-
-        coreGroup.Controls.Add(installedKey);
-        coreGroup.Controls.Add(_installedVersion);
-        coreGroup.Controls.Add(latestKey);
-        coreGroup.Controls.Add(_latestVersion);
-        coreGroup.Controls.Add(_updateStatus);
-        coreGroup.Controls.Add(_checkCoreUpdate);
-        coreGroup.Controls.Add(_validateCandidate);
-        coreGroup.Controls.Add(_installValidated);
-        coreGroup.Controls.Add(_testRollback);
-
-        var diagGroup = new GroupBox
-        {
-            Text = "Diagnostics",
-            Location = new Point(24, 655),
-            Size = new Size(706, 70)
-        };
-        Controls.Add(diagGroup);
-
-        _copyDiagnostics.Text = "Copy diagnostics";
-        _copyDiagnostics.Size = new Size(160, 36);
-        _copyDiagnostics.Location = new Point(18, 24);
-        _copyDiagnostics.Click += async (_, _) => await CopyDiagnosticsAsync();
-        diagGroup.Controls.Add(_copyDiagnostics);
-
-        _about.Text = "About";
-        _about.Size = new Size(90, 36);
-        _about.Location = new Point(585, 24);
-        _about.Click += async (_, _) => await ShowAboutAsync();
-        diagGroup.Controls.Add(_about);
-
-        var diagHint = new Label
-        {
-            Text = "Safe report for support",
-            AutoSize = false,
-            Location = new Point(195, 27),
-            Size = new Size(360, 34)
-        };
-        diagGroup.Controls.Add(diagHint);
 
         _operationValue.Text = "Ready";
-        _operationValue.AutoSize = true;
-        _operationValue.Location = new Point(24, 745);
-        Controls.Add(_operationValue);
+        _operationValue.AutoSize = false;
+        _operationValue.Dock = DockStyle.Fill;
+        _operationValue.TextAlign = ContentAlignment.MiddleLeft;
+        _operationValue.ForeColor = SystemColors.GrayText;
+
+        footer.Controls.Add(_operationValue);
+        root.Controls.Add(footer, 0, 1);
+
+        // STATUS
+
+        var statusLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(24),
+            Margin = new Padding(0)
+        };
+        statusLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        statusLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        _statusTab.Controls.Add(statusLayout);
+
+        statusLayout.Controls.Add(
+            CreatePageHeader(
+                "Status",
+                "Current Mihomo state and connection mode."),
+            0,
+            0);
+
+        var statusContent = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 20, 0, 0)
+        };
+        statusContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56F));
+        statusContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44F));
+        statusLayout.Controls.Add(statusContent, 0, 1);
+
+        var overviewCard = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Padding = new Padding(18),
+            Margin = new Padding(0, 0, 10, 0),
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = SystemColors.Window
+        };
+        overviewCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145F));
+        overviewCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+        var overviewTitle = CreateSectionTitle("Overview");
+        overviewCard.Controls.Add(overviewTitle, 0, 0);
+        overviewCard.SetColumnSpan(overviewTitle, 2);
+
+        AddStatusRow(overviewCard, "Mode", _modeValue);
+        AddStatusRow(overviewCard, "Mihomo", _processValue);
+        AddStatusRow(overviewCard, "System proxy", _proxyValue);
+        AddStatusRow(overviewCard, "Active server", _nodeValue);
+        AddStatusRow(overviewCard, "Health", _healthValue);
+        AddStatusRow(overviewCard, "Watchdog", _watchdogValue);
+
+        statusContent.Controls.Add(overviewCard, 0, 0);
+
+        var modeCard = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 5,
+            Padding = new Padding(18),
+            Margin = new Padding(10, 0, 0, 0),
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = SystemColors.Window
+        };
+        modeCard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        modeCard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        modeCard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        modeCard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        modeCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+        modeCard.Controls.Add(CreateSectionTitle("Connection mode"), 0, 0);
+
+        var modeHint = new Label
+        {
+            Text = "Choose how Windows traffic is routed through Mihomo.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 2, 0, 16)
+        };
+        modeCard.Controls.Add(modeHint, 0, 1);
+
+        var modeButtons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0, 0, 0, 16)
+        };
+
+        ConfigureActionButton(
+            _proxyMode,
+            "Proxy",
+            105,
+            async (_, _) => await SwitchModeAsync("proxy"));
+
+        ConfigureActionButton(
+            _tunMode,
+            "TUN",
+            105,
+            async (_, _) => await SwitchModeAsync("tun"));
+
+        ConfigureActionButton(
+            _offMode,
+            "Off",
+            105,
+            async (_, _) => await SwitchModeAsync("off"));
+
+        modeButtons.Controls.Add(_proxyMode);
+        modeButtons.Controls.Add(_tunMode);
+        modeButtons.Controls.Add(_offMode);
+        modeCard.Controls.Add(modeButtons, 0, 2);
+
+        var statusActions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0)
+        };
+
+        ConfigureActionButton(
+            _restart,
+            "Restart Proxy",
+            140,
+            async (_, _) => await RunScriptAsync(
+                "Start-Mihomo.ps1",
+                false,
+                "-Restart"));
+
+        ConfigureActionButton(
+            _refresh,
+            "Refresh",
+            110,
+            async (_, _) => await RefreshStateAsync());
+
+        statusActions.Controls.Add(_restart);
+        statusActions.Controls.Add(_refresh);
+        modeCard.Controls.Add(statusActions, 0, 3);
+
+        statusContent.Controls.Add(modeCard, 1, 0);
+
+        // SERVERS
+
+        var serversLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(24),
+            Margin = new Padding(0)
+        };
+        serversLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        serversLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        serversLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        serversLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        _serversTab.Controls.Add(serversLayout);
+
+        serversLayout.Controls.Add(
+            CreatePageHeader(
+                "Servers",
+                "Servers from all configured proxy providers."),
+            0,
+            0);
+
+        var serverToolbar = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0, 18, 0, 0)
+        };
+
+        ConfigureActionButton(
+            _serversRefresh,
+            "Refresh",
+            110,
+            async (_, _) => await RefreshServersAsync());
+
+        _showOffline.Text = "Show offline";
+        _showOffline.AutoSize = true;
+        _showOffline.Margin = new Padding(12, 8, 0, 0);
+        _showOffline.CheckedChanged +=
+            async (_, _) => await RefreshServersAsync();
+
+        serverToolbar.Controls.Add(_serversRefresh);
+        serverToolbar.Controls.Add(_showOffline);
+        serversLayout.Controls.Add(serverToolbar, 0, 1);
+        var selectionBar = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 14, 0, 0)
+        };
+        selectionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        selectionBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _serverSelectionInfo.Text = "Selection: —";
+        _serverSelectionInfo.AutoSize = true;
+        _serverSelectionInfo.Anchor = AnchorStyles.Left;
+        _serverSelectionInfo.Font = new Font("Segoe UI Semibold", 10F);
+        _serverSelectionInfo.Margin = new Padding(0, 8, 12, 0);
+
+        var selectionActions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+
+        ConfigureActionButton(
+            _autoServer,
+            "Auto Server",
+            125,
+            async (_, _) => await SetAutomaticServerSelectionAsync());
+
+        ConfigureActionButton(
+            _useSelectedServer,
+            "Use selected",
+            135,
+            async (_, _) => await UseSelectedServerAsync());
+
+        _useSelectedServer.Enabled = false;
+
+        selectionActions.Controls.Add(_autoServer);
+        selectionActions.Controls.Add(_useSelectedServer);
+
+        selectionBar.Controls.Add(_serverSelectionInfo, 0, 0);
+        selectionBar.Controls.Add(selectionActions, 1, 0);
+
+        serversLayout.Controls.Add(selectionBar, 0, 2);
+
+        _serversGrid.Dock = DockStyle.Fill;
+        _serversGrid.Margin = new Padding(0, 14, 0, 0);
+        _serversGrid.ReadOnly = true;
+        _serversGrid.AllowUserToAddRows = false;
+        _serversGrid.AllowUserToDeleteRows = false;
+        _serversGrid.AllowUserToResizeRows = false;
+        _serversGrid.MultiSelect = false;
+        _serversGrid.SelectionMode =
+            DataGridViewSelectionMode.FullRowSelect;
+        _serversGrid.RowHeadersVisible = false;
+        _serversGrid.AutoGenerateColumns = false;
+        _serversGrid.AutoSizeColumnsMode =
+            DataGridViewAutoSizeColumnsMode.Fill;
+        _serversGrid.ColumnHeadersHeight = 36;
+        _serversGrid.RowTemplate.Height = 32;
+        _serversGrid.CellBorderStyle =
+            DataGridViewCellBorderStyle.SingleHorizontal;
+        _serversGrid.BackgroundColor = SystemColors.Window;
+        _serversGrid.BorderStyle = BorderStyle.FixedSingle;
+
+        _serversGrid.Columns.Clear();
+
+        _serversGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Server",
+            HeaderText = "Server",
+            DataPropertyName = "Server",
+            FillWeight = 34F,
+            MinimumWidth = 220
+        });
+
+        _serversGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Subscription",
+            HeaderText = "Subscription",
+            DataPropertyName = "Subscription",
+            FillWeight = 24F,
+            MinimumWidth = 140
+        });
+
+        _serversGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Protocol",
+            HeaderText = "Protocol",
+            DataPropertyName = "Protocol",
+            FillWeight = 16F,
+            MinimumWidth = 95
+        });
+
+        var pingColumn = new DataGridViewTextBoxColumn
+        {
+            Name = "Ping",
+            HeaderText = "Ping",
+            DataPropertyName = "Ping",
+            FillWeight = 12F,
+            MinimumWidth = 80
+        };
+        pingColumn.DefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleRight;
+        _serversGrid.Columns.Add(pingColumn);
+
+        _serversGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Status",
+            HeaderText = "Status",
+            DataPropertyName = "Status",
+            FillWeight = 14F,
+            MinimumWidth = 90
+        });
+
+
+        _serversGrid.SelectionChanged += (_, _) =>
+        {
+            _useSelectedServer.Enabled =
+                !_busy &&
+                _serversGrid.SelectedRows.Count == 1;
+        };
+        serversLayout.Controls.Add(_serversGrid, 0, 3);
+
+        // SUBSCRIPTIONS
+
+        var subscriptionsLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(24),
+            Margin = new Padding(0)
+        };
+        subscriptionsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        subscriptionsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        subscriptionsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        subscriptionsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _subscriptionsTab.Controls.Add(subscriptionsLayout);
+
+        subscriptionsLayout.Controls.Add(
+            CreatePageHeader(
+                "Subscriptions",
+                "Manage configured proxy providers and add new subscriptions."),
+            0,
+            0);
+
+        var providerToolbar = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0, 18, 0, 0)
+        };
+
+        ConfigureActionButton(
+            _subscriptionsRefresh,
+            "Refresh",
+            110,
+            async (_, _) => await RefreshSubscriptionsAsync());
+
+        ConfigureActionButton(
+            _subscriptionUpdateSelected,
+            "Update selected",
+            150,
+            async (_, _) => await UpdateSelectedSubscriptionAsync());
+
+        ConfigureActionButton(
+            _subscriptionRemoveSelected,
+            "Remove selected",
+            150,
+            async (_, _) => await RemoveSelectedSubscriptionAsync());
+
+        _subscriptionUpdateSelected.Enabled = false;
+        _subscriptionRemoveSelected.Enabled = false;
+
+        providerToolbar.Controls.Add(_subscriptionsRefresh);
+        providerToolbar.Controls.Add(_subscriptionUpdateSelected);
+        providerToolbar.Controls.Add(_subscriptionRemoveSelected);
+
+        subscriptionsLayout.Controls.Add(providerToolbar, 0, 1);
+
+        _subscriptionsGrid.Dock = DockStyle.Fill;
+        _subscriptionsGrid.Margin = new Padding(0, 16, 0, 16);
+        _subscriptionsGrid.ReadOnly = true;
+        _subscriptionsGrid.AllowUserToAddRows = false;
+        _subscriptionsGrid.AllowUserToDeleteRows = false;
+        _subscriptionsGrid.AllowUserToResizeRows = false;
+        _subscriptionsGrid.MultiSelect = false;
+        _subscriptionsGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _subscriptionsGrid.RowHeadersVisible = false;
+        _subscriptionsGrid.AutoGenerateColumns = false;
+        _subscriptionsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _subscriptionsGrid.ColumnHeadersHeight = 36;
+        _subscriptionsGrid.RowTemplate.Height = 32;
+        _subscriptionsGrid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+        _subscriptionsGrid.BackgroundColor = SystemColors.Window;
+        _subscriptionsGrid.BorderStyle = BorderStyle.FixedSingle;
+        _subscriptionsGrid.ColumnHeadersDefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleCenter;
+        _subscriptionsGrid.DefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleCenter;
+
+        _subscriptionsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Name",
+            HeaderText = "Subscription",
+            FillWeight = 60F,
+            MinimumWidth = 260
+        });
+
+        var serversColumn = new DataGridViewTextBoxColumn
+        {
+            Name = "Servers",
+            HeaderText = "Servers",
+            FillWeight = 20F,
+            MinimumWidth = 100
+        };
+        serversColumn.DefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns.Add(serversColumn);
+
+        var onlineColumn = new DataGridViewTextBoxColumn
+        {
+            Name = "Online",
+            HeaderText = "Online",
+            FillWeight = 20F,
+            MinimumWidth = 100
+        };
+        onlineColumn.DefaultCellStyle.Alignment =
+            DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns.Add(onlineColumn);
+
+        _subscriptionsGrid.SelectionChanged += (_, _) =>
+        {
+            bool selected = _subscriptionsGrid.SelectedRows.Count == 1;
+            _subscriptionUpdateSelected.Enabled = selected && !_busy;
+            _subscriptionRemoveSelected.Enabled = selected && !_busy;
+        };
+
+        subscriptionsLayout.Controls.Add(_subscriptionsGrid, 0, 2);
+
+        var importCard = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(18),
+            Margin = new Padding(0),
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = SystemColors.Window
+        };
+
+        importCard.Controls.Add(
+            CreateSectionTitle("Add subscription"),
+            0,
+            0);
+
+        var subscriptionHint = new Label
+        {
+            Text = "Paste a subscription locally, test it, then apply the validated configuration.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 2, 0, 14)
+        };
+        importCard.Controls.Add(subscriptionHint, 0, 1);
+
+        _subscriptionInfo.Text = "No pending import";
+        _subscriptionInfo.AutoSize = true;
+        _subscriptionInfo.Dock = DockStyle.Fill;
+        _subscriptionInfo.Margin = new Padding(0, 0, 0, 16);
+        importCard.Controls.Add(_subscriptionInfo, 0, 2);
+
+        var subscriptionActions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0)
+        };
+
+        ConfigureActionButton(
+            _paste,
+            "Paste",
+            110,
+            (_, _) => PasteInput());
+
+        ConfigureActionButton(
+            _test,
+            "Test",
+            110,
+            async (_, _) => await TestPendingAsync());
+
+        ConfigureActionButton(
+            _apply,
+            "Apply",
+            110,
+            async (_, _) => await ApplyPendingAsync());
+
+        subscriptionActions.Controls.Add(_paste);
+        subscriptionActions.Controls.Add(_test);
+        subscriptionActions.Controls.Add(_apply);
+
+        importCard.Controls.Add(subscriptionActions, 0, 3);
+        subscriptionsLayout.Controls.Add(importCard, 0, 3);
+
+        // MAINTENANCE
+
+        var maintenanceLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(24),
+            Margin = new Padding(0)
+        };
+        maintenanceLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        maintenanceLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        _maintenanceTab.Controls.Add(maintenanceLayout);
+
+        maintenanceLayout.Controls.Add(
+            CreatePageHeader(
+                "Maintenance",
+                "Core updates, validation, rollback and diagnostics."),
+            0,
+            0);
+
+        var maintenanceContent = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            Margin = new Padding(0, 20, 0, 0)
+        };
+        maintenanceLayout.Controls.Add(maintenanceContent, 0, 1);
+
+        var coreCard = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Width = 900,
+            ColumnCount = 1,
+            RowCount = 6,
+            Padding = new Padding(18),
+            Margin = new Padding(0, 0, 0, 16),
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = SystemColors.Window
+        };
+
+        coreCard.Controls.Add(
+            CreateSectionTitle("Mihomo Core"),
+            0,
+            0);
+
+        var coreHint = new Label
+        {
+            Text = "Stable channel update workflow with validation before installation.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 2, 0, 14)
+        };
+        coreCard.Controls.Add(coreHint, 0, 1);
+
+        var versionTable = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            RowCount = 2,
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        versionTable.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Absolute, 130F));
+        versionTable.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Percent, 100F));
+
+        var installedKey = new Label
+        {
+            Text = "Installed",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 4, 12, 8)
+        };
+
+        _installedVersion.Text = "—";
+        _installedVersion.AutoSize = true;
+        _installedVersion.Font =
+            new Font("Segoe UI Semibold", 10F);
+        _installedVersion.Margin =
+            new Padding(0, 4, 0, 8);
+
+        var latestKey = new Label
+        {
+            Text = "Latest stable",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 4, 12, 0)
+        };
+
+        _latestVersion.Text = "Not checked";
+        _latestVersion.AutoSize = true;
+        _latestVersion.Font =
+            new Font("Segoe UI Semibold", 10F);
+        _latestVersion.Margin =
+            new Padding(0, 4, 0, 0);
+
+        versionTable.Controls.Add(installedKey, 0, 0);
+        versionTable.Controls.Add(_installedVersion, 1, 0);
+        versionTable.Controls.Add(latestKey, 0, 1);
+        versionTable.Controls.Add(_latestVersion, 1, 1);
+
+        coreCard.Controls.Add(versionTable, 0, 2);
+
+        _updateStatus.Text =
+            "Run validation before transactional install.";
+        _updateStatus.AutoSize = true;
+        _updateStatus.Dock = DockStyle.Top;
+        _updateStatus.ForeColor = SystemColors.GrayText;
+        _updateStatus.Margin = new Padding(0, 0, 0, 14);
+        coreCard.Controls.Add(_updateStatus, 0, 3);
+
+        var coreActions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0)
+        };
+
+        ConfigureActionButton(
+            _checkCoreUpdate,
+            "Check update",
+            140,
+            async (_, _) => await CheckCoreUpdateAsync());
+
+        ConfigureActionButton(
+            _validateCandidate,
+            "Download && validate",
+            175,
+            async (_, _) => await ValidateLatestCandidateAsync());
+
+        ConfigureActionButton(
+            _installValidated,
+            "Install validated",
+            155,
+            async (_, _) => await InstallValidatedCandidateAsync(false));
+
+        _installValidated.Enabled = false;
+
+        ConfigureActionButton(
+            _testRollback,
+            "Test rollback",
+            130,
+            async (_, _) => await InstallValidatedCandidateAsync(true));
+
+        _testRollback.Enabled = false;
+
+        coreActions.Controls.Add(_checkCoreUpdate);
+        coreActions.Controls.Add(_validateCandidate);
+        coreActions.Controls.Add(_installValidated);
+        coreActions.Controls.Add(_testRollback);
+
+        coreCard.Controls.Add(coreActions, 0, 4);
+        maintenanceContent.Controls.Add(coreCard);
+
+        var diagnosticsCard = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Width = 900,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(18),
+            Margin = new Padding(0),
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = SystemColors.Window
+        };
+
+        diagnosticsCard.Controls.Add(
+            CreateSectionTitle("Diagnostics"),
+            0,
+            0);
+
+        var diagnosticsHint = new Label
+        {
+            Text = "Create a safe diagnostic report for troubleshooting.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 2, 0, 14)
+        };
+        diagnosticsCard.Controls.Add(diagnosticsHint, 0, 1);
+
+        var diagnosticsActions = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Margin = new Padding(0)
+        };
+
+        ConfigureActionButton(
+            _copyDiagnostics,
+            "Copy diagnostics",
+            155,
+            async (_, _) => await CopyDiagnosticsAsync());
+
+        ConfigureActionButton(
+            _about,
+            "About",
+            100,
+            async (_, _) => await ShowAboutAsync());
+
+        diagnosticsActions.Controls.Add(_copyDiagnostics);
+        diagnosticsActions.Controls.Add(_about);
+
+        diagnosticsCard.Controls.Add(diagnosticsActions, 0, 2);
+        maintenanceContent.Controls.Add(diagnosticsCard);
+
+        // TRAY
 
         var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Open", null, (_, _) => RestoreFromTray());
+        trayMenu.Items.Add(
+            "Open",
+            null,
+            (_, _) => RestoreFromTray());
+
         trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add("Proxy", null, async (_, _) => await SwitchModeAsync("proxy"));
-        trayMenu.Items.Add("TUN", null, async (_, _) => await SwitchModeAsync("tun"));
-        trayMenu.Items.Add("Off", null, async (_, _) => await SwitchModeAsync("off"));
+
+        trayMenu.Items.Add(
+            "Proxy",
+            null,
+            async (_, _) => await SwitchModeAsync("proxy"));
+
+        trayMenu.Items.Add(
+            "TUN",
+            null,
+            async (_, _) => await SwitchModeAsync("tun"));
+
+        trayMenu.Items.Add(
+            "Off",
+            null,
+            async (_, _) => await SwitchModeAsync("off"));
+
         trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add("Exit UI", null, (_, _) =>
-        {
-            _exitRequested = true;
-            Close();
-        });
+
+        trayMenu.Items.Add(
+            "Exit UI",
+            null,
+            (_, _) =>
+            {
+                _exitRequested = true;
+                Close();
+            });
 
         _trayIcon.Text = "Mihomo Control";
         _trayIcon.Icon = Icon ?? SystemIcons.Application;
@@ -250,7 +916,8 @@ public sealed class MainForm : Form
 
         FormClosing += (_, e) =>
         {
-            if (!_exitRequested && e.CloseReason == CloseReason.UserClosing)
+            if (!_exitRequested &&
+                e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
                 HideToTray();
@@ -258,12 +925,24 @@ public sealed class MainForm : Form
         };
 
         _statusTimer.Interval = 1000;
-        _statusTimer.Tick += async (_, _) => await RefreshStatusTimerAsync();
+        _statusTimer.Tick +=
+            async (_, _) => await RefreshStatusTimerAsync();
+
+        _tabs.SelectedIndexChanged += async (_, _) =>
+        {
+            if (_tabs.SelectedTab == _serversTab)
+                await RefreshServersAsync();
+            await RefreshSubscriptionsAsync();
+        };
 
         Shown += async (_, _) =>
         {
-            _installedVersion.Text = await GetInstalledVersionAsync();
+            _installedVersion.Text =
+                await GetInstalledVersionAsync();
+
             await RefreshLocalStateOnlyAsync();
+            await RefreshServersAsync();
+
             _statusTimer.Start();
             _ = RefreshHealthOnlyAsync();
         };
@@ -274,6 +953,69 @@ public sealed class MainForm : Form
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
         };
+
+        ResumeLayout(true);
+    }
+
+    private static Control CreatePageHeader(
+        string title,
+        string subtitle)
+    {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+
+        var titleLabel = new Label
+        {
+            Text = title,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 18F),
+            Margin = new Padding(0, 0, 0, 4)
+        };
+
+        var subtitleLabel = new Label
+        {
+            Text = subtitle,
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(1, 0, 0, 0)
+        };
+
+        panel.Controls.Add(titleLabel, 0, 0);
+        panel.Controls.Add(subtitleLabel, 0, 1);
+
+        return panel;
+    }
+
+    private static Label CreateSectionTitle(string text)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 11F),
+            Margin = new Padding(0, 0, 0, 10)
+        };
+    }
+
+    private static void ConfigureActionButton(
+        Button button,
+        string text,
+        int width,
+        EventHandler handler)
+    {
+        button.Text = text;
+        button.AutoSize = false;
+        button.Size = new Size(width, 36);
+        button.Margin = new Padding(0, 0, 8, 0);
+        button.UseVisualStyleBackColor = true;
+        button.Click += handler;
     }
 
     private void HideToTray()
@@ -291,22 +1033,32 @@ public sealed class MainForm : Form
         BringToFront();
     }
 
-    private void AddStatusRow(string caption, Label value, int y)
+    private static void AddStatusRow(
+        TableLayoutPanel table,
+        string caption,
+        Label value)
     {
+        int row = table.RowCount;
+        table.RowCount++;
+        table.RowStyles.Add(
+            new RowStyle(SizeType.AutoSize));
+
         var key = new Label
         {
-            Text = caption + ":",
-            ForeColor = SystemColors.GrayText,
+            Text = caption,
             AutoSize = true,
-            Location = new Point(27, y + 2)
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(0, 5, 16, 10)
         };
+
         value.Text = "—";
-        value.AutoSize = false;
-        value.Size = new Size(205, 24);
-        value.Location = new Point(130, y);
+        value.AutoSize = true;
+        value.Dock = DockStyle.Fill;
         value.Font = new Font("Segoe UI Semibold", 10F);
-        Controls.Add(key);
-        Controls.Add(value);
+        value.Margin = new Padding(0, 5, 0, 10);
+
+        table.Controls.Add(key, 0, row);
+        table.Controls.Add(value, 1, row);
     }
 
     private static void ConfigureButton(Button button, string text, int x, int y, Control parent, EventHandler handler)
@@ -1247,6 +1999,7 @@ public sealed class MainForm : Form
             {
                 Timeout = TimeSpan.FromSeconds(15)
             };
+            directClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MihomoControl", "0.4.9.3"));
 
             using var directResponse = await directClient.GetAsync(url);
             directResponse.EnsureSuccessStatusCode();
@@ -1279,6 +2032,7 @@ public sealed class MainForm : Form
             {
                 Timeout = TimeSpan.FromSeconds(20)
             };
+            proxyClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MihomoControl", "0.4.9.3"));
 
             using var proxyResponse = await proxyClient.GetAsync(url);
             proxyResponse.EnsureSuccessStatusCode();
@@ -1674,6 +2428,562 @@ rules:
         Process.Start(psi);
     }
 
+    private async Task<JsonDocument> RunImportSubscriptionActionAsync(
+        string action,
+        string providerName,
+        string? inputFile = null)
+    {
+        string script = Path.Combine(ScriptsDir, "Import-Subscription.ps1");
+
+        string args =
+            $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" " +
+            $"-Action {action} " +
+            $"-ProviderName \"{providerName}\"";
+
+        if (!string.IsNullOrWhiteSpace(inputFile))
+        {
+            args += $" -InputFile \"{inputFile}\"";
+        }
+
+        var result = await RunProcessCaptureAsync(
+            "pwsh.exe",
+            args,
+            false);
+
+        string json = string.IsNullOrWhiteSpace(result.stdout)
+            ? result.stderr
+            : result.stdout;
+
+        return JsonDocument.Parse(json);
+    }
+    private async Task UpdateSubscriptionAsync(string providerName)
+    {
+        using var doc = await RunImportSubscriptionActionAsync(
+            "Update",
+            providerName);
+
+        var root = doc.RootElement;
+
+        bool success =
+            root.TryGetProperty("success", out var successElement) &&
+            successElement.ValueKind == JsonValueKind.True;
+
+        string message =
+            root.TryGetProperty("message", out var messageElement)
+                ? messageElement.GetString() ?? "Provider update finished."
+                : "Provider update finished.";
+
+        if (!success)
+            throw new InvalidOperationException(message);
+
+        _subscriptionInfo.Text = message;
+    }
+
+    private async Task RefreshSubscriptionsAsync()
+    {
+        try
+        {
+            var providers = await ReadSubscriptionProvidersAsync();
+
+            _subscriptionsGrid.Rows.Clear();
+
+            foreach (var provider in providers)
+            {
+                _subscriptionsGrid.Rows.Add(
+                    provider.Name,
+                    provider.ProxyCount,
+                    provider.AliveCount);
+            }
+
+            bool selected = _subscriptionsGrid.SelectedRows.Count == 1;
+            _subscriptionUpdateSelected.Enabled = selected && !_busy;
+            _subscriptionRemoveSelected.Enabled = selected && !_busy;
+        }
+        catch (Exception ex)
+        {
+            _operationValue.Text = $"Subscription refresh failed: {ex.Message}";
+        }
+    }
+
+    private string? GetSelectedSubscriptionProvider()
+    {
+        if (_subscriptionsGrid.SelectedRows.Count != 1)
+            return null;
+
+        return _subscriptionsGrid.SelectedRows[0]
+            .Cells["Name"]
+            .Value?
+            .ToString();
+    }
+
+    private async Task UpdateSelectedSubscriptionAsync()
+    {
+        string? providerName = GetSelectedSubscriptionProvider();
+
+        if (string.IsNullOrWhiteSpace(providerName))
+            return;
+
+        SetBusy(true, $"Updating {providerName}...");
+
+        try
+        {
+            await UpdateSubscriptionAsync(providerName);
+            await RefreshSubscriptionsAsync();
+            await RefreshServersAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Update subscription",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetBusy(false, "Ready");
+        }
+    }
+
+    private async Task RemoveSelectedSubscriptionAsync()
+    {
+        string? providerName = GetSelectedSubscriptionProvider();
+
+        if (string.IsNullOrWhiteSpace(providerName))
+            return;
+
+        var answer = MessageBox.Show(
+            $"Remove subscription '{providerName}'?`n`n" +
+            "Its provider block will be removed from Mihomo configuration.",
+            "Remove subscription",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+
+        if (answer != DialogResult.Yes)
+            return;
+
+        SetBusy(true, $"Removing {providerName}...");
+
+        try
+        {
+            await RemoveSubscriptionAsync(providerName);
+            await RefreshSubscriptionsAsync();
+            await RefreshServersAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Remove subscription",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetBusy(false, "Ready");
+        }
+    }
+    private async Task RemoveSubscriptionAsync(string providerName)
+    {
+        using var doc = await RunImportSubscriptionActionAsync(
+            "Remove",
+            providerName);
+
+        var root = doc.RootElement;
+
+        bool success =
+            root.TryGetProperty("success", out var successElement) &&
+            successElement.ValueKind == JsonValueKind.True;
+
+        string message =
+            root.TryGetProperty("message", out var messageElement)
+                ? messageElement.GetString() ?? "Provider removal finished."
+                : "Provider removal finished.";
+
+        if (!success)
+            throw new InvalidOperationException(message);
+
+        _subscriptionInfo.Text = message;
+    }
+    private sealed record SubscriptionProviderInfo(
+        string Name,
+        int ProxyCount,
+        int AliveCount,
+        string TestUrl);
+
+    private async Task<List<SubscriptionProviderInfo>> ReadSubscriptionProvidersAsync()
+    {
+        using var handler = new HttpClientHandler { UseProxy = false };
+        using var client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(3)
+        };
+
+        string json = await client.GetStringAsync(
+            "http://127.0.0.1:9090/providers/proxies");
+
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<SubscriptionProviderInfo>();
+
+        if (!doc.RootElement.TryGetProperty("providers", out var providers))
+            return result;
+
+        foreach (var provider in providers.EnumerateObject())
+        {
+            if (provider.NameEquals("default"))
+                continue;
+
+            int proxyCount = 0;
+            int aliveCount = 0;
+
+            if (provider.Value.TryGetProperty("proxies", out var proxies) &&
+                proxies.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var proxy in proxies.EnumerateArray())
+                {
+                    proxyCount++;
+
+                    if (proxy.TryGetProperty("alive", out var alive) &&
+                        alive.ValueKind == JsonValueKind.True)
+                    {
+                        aliveCount++;
+                    }
+                }
+            }
+
+            string testUrl =
+                provider.Value.TryGetProperty("testUrl", out var testUrlElement)
+                    ? testUrlElement.GetString() ?? ""
+                    : "";
+
+            result.Add(new SubscriptionProviderInfo(
+                provider.Name,
+                proxyCount,
+                aliveCount,
+                testUrl));
+        }
+
+        return result
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+    private sealed record ServerInfo(
+        string Provider,
+        string Name,
+        string Type,
+        bool Alive,
+        int Delay);
+
+    private async Task<List<ServerInfo>> ReadServersAsync()
+    {
+        using var handler = new HttpClientHandler { UseProxy = false };
+        using var client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(3)
+        };
+
+        string json = await client.GetStringAsync(
+            "http://127.0.0.1:9090/providers/proxies");
+
+        using var doc = JsonDocument.Parse(json);
+        var result = new List<ServerInfo>();
+
+        if (!doc.RootElement.TryGetProperty("providers", out var providers) ||
+            providers.ValueKind != JsonValueKind.Object)
+        {
+            return result;
+        }
+
+        foreach (var provider in providers.EnumerateObject())
+        {
+            if (provider.NameEquals("default"))
+                continue;
+
+            if (!provider.Value.TryGetProperty("proxies", out var proxies) ||
+                proxies.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var proxy in proxies.EnumerateArray())
+            {
+                string name =
+                    proxy.TryGetProperty("name", out var nameElement)
+                        ? nameElement.GetString() ?? ""
+                        : "";
+
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                string type =
+                    proxy.TryGetProperty("type", out var typeElement)
+                        ? typeElement.GetString() ?? ""
+                        : "";
+
+                bool alive =
+                    proxy.TryGetProperty("alive", out var aliveElement) &&
+                    aliveElement.ValueKind == JsonValueKind.True;
+
+                int delay = 0;
+
+                if (proxy.TryGetProperty("history", out var history) &&
+                    history.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var entry in history.EnumerateArray())
+                    {
+                        if (entry.TryGetProperty("delay", out var delayElement) &&
+                            delayElement.ValueKind == JsonValueKind.Number &&
+                            delayElement.TryGetInt32(out int measuredDelay) &&
+                            measuredDelay > 0)
+                        {
+                            delay = measuredDelay;
+                        }
+                    }
+                }
+
+                result.Add(new ServerInfo(
+                    provider.Name,
+                    name,
+                    type,
+                    alive,
+                    delay));
+            }
+        }
+
+        return result
+            .OrderBy(x => x.Alive ? 0 : 1)
+            .ThenBy(x => x.Delay > 0 ? 0 : 1)
+            .ThenBy(x => x.Delay > 0 ? x.Delay : int.MaxValue)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Provider, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+    private const string ServerSelectionModeFile =
+        BaseDir + @"\server-selection-mode.txt";
+
+    private const string ManualServerFile =
+        BaseDir + @"\manual-server.txt";
+
+    private string ReadServerSelectionMode()
+    {
+        try
+        {
+            if (!File.Exists(ServerSelectionModeFile))
+                return "auto";
+
+            string mode = File.ReadAllText(ServerSelectionModeFile)
+                .Trim()
+                .ToLowerInvariant();
+
+            return mode is "auto" or "manual"
+                ? mode
+                : "auto";
+        }
+        catch
+        {
+            return "auto";
+        }
+    }
+
+    private string? ReadManualServer()
+    {
+        try
+        {
+            if (!File.Exists(ManualServerFile))
+                return null;
+
+            string name = File.ReadAllText(ManualServerFile).Trim();
+
+            return string.IsNullOrWhiteSpace(name)
+                ? null
+                : name;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void RefreshServerSelectionInfo()
+    {
+        string mode = ReadServerSelectionMode();
+
+        if (mode == "manual")
+        {
+            string? manual = ReadManualServer();
+
+            _serverSelectionInfo.Text =
+                string.IsNullOrWhiteSpace(manual)
+                    ? "Selection: Manual"
+                    : $"Selection: Manual · {manual}";
+        }
+        else
+        {
+            _serverSelectionInfo.Text = "Selection: Auto";
+        }
+    }
+
+    private async Task RunServerSelectionBackendAsync(
+        string mode,
+        string? serverName = null)
+    {
+        if (mode is not ("auto" or "manual"))
+            throw new ArgumentOutOfRangeException(nameof(mode));
+
+        string commonScript =
+            Path.Combine(ScriptsDir, "_Common.ps1");
+
+        if (!File.Exists(commonScript))
+            throw new FileNotFoundException(
+                "Mihomo backend script was not found.",
+                commonScript);
+
+        string command;
+
+        if (mode == "auto")
+        {
+            command =
+                $". '{commonScript.Replace("'", "''")}'; " +
+                "Set-ServerSelectionMode -Mode auto";
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(serverName))
+                throw new InvalidOperationException(
+                    "No server was selected.");
+
+            string encoded =
+                Convert.ToBase64String(
+                    Encoding.UTF8.GetBytes(serverName));
+
+            command =
+                $". '{commonScript.Replace("'", "''")}'; " +
+                $"$n=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')); " +
+                "Set-ManualServer -Name $n; " +
+                "Set-ServerSelectionMode -Mode manual; " +
+                "Set-AutoProxy -Name $n";
+        }
+
+        string encodedCommand =
+            Convert.ToBase64String(
+                Encoding.Unicode.GetBytes(command));
+
+        var result = await RunProcessCaptureAsync(
+            "pwsh.exe",
+            $"-NoProfile -EncodedCommand {encodedCommand}",
+            false);
+
+        if (result.exitCode != 0)
+        {
+            string details =
+                string.IsNullOrWhiteSpace(result.stderr)
+                    ? result.stdout
+                    : result.stderr;
+
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(details)
+                    ? "Server selection backend failed."
+                    : TrimForMessage(details));
+        }
+    }
+
+    private async Task SetAutomaticServerSelectionAsync()
+    {
+        SetBusy(true, "Enabling automatic server selection...");
+
+        try
+        {
+            await RunServerSelectionBackendAsync("auto");
+            RefreshServerSelectionInfo();
+            await RefreshServersAsync();
+            _operationValue.Text = "Automatic server selection enabled";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Auto Server",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetBusy(false, "Ready");
+        }
+    }
+
+    private async Task UseSelectedServerAsync()
+    {
+        if (_serversGrid.SelectedRows.Count != 1)
+            return;
+
+        string? serverName =
+            _serversGrid.SelectedRows[0]
+                .Cells["Server"]
+                .Value?
+                .ToString();
+
+        if (string.IsNullOrWhiteSpace(serverName))
+            return;
+
+        SetBusy(true, $"Selecting {serverName}...");
+
+        try
+        {
+            await RunServerSelectionBackendAsync(
+                "manual",
+                serverName);
+
+            RefreshServerSelectionInfo();
+            await RefreshServersAsync();
+            await RefreshLocalStateOnlyAsync();
+
+            _operationValue.Text =
+                $"Manual server selected: {serverName}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Manual Server",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetBusy(false, "Ready");
+        }
+    }
+    private async Task RefreshServersAsync()
+    {
+        try
+        {
+            var servers = await ReadServersAsync();
+
+            if (!_showOffline.Checked)
+                servers = servers.Where(x => x.Alive).ToList();
+
+            _serversGrid.Rows.Clear();
+
+            foreach (var server in servers)
+            {
+                _serversGrid.Rows.Add(
+                    server.Name,
+                    server.Provider,
+                    server.Type,
+                    server.Delay > 0 ? $"{server.Delay} ms" : "—",
+                    server.Alive ? "Online" : "Offline");
+    
+            RefreshServerSelectionInfo();
+            _useSelectedServer.Enabled = !_busy && _serversGrid.SelectedRows.Count == 1;
+        }
+        }
+        catch (Exception ex)
+        {
+            _operationValue.Text = $"Server refresh failed: {ex.Message}";
+        }
+    }
     private async Task RunScriptAsync(string script, bool elevated, params string[] args)
     {
         SetBusy(true, "Working...");
@@ -2061,8 +3371,8 @@ rules:
 
         foreach (var b in new[]
         {
-            _proxyMode, _tunMode, _offMode, _restart, _refresh,
-            _paste, _test, _apply, _updateNow, _checkCoreUpdate, _validateCandidate, _installValidated, _testRollback, _copyDiagnostics, _about
+            _proxyMode, _tunMode, _offMode, _restart, _refresh, _autoServer, _useSelectedServer,
+            _paste, _test, _apply, _updateNow, _subscriptionsRefresh, _subscriptionUpdateSelected, _subscriptionRemoveSelected, _checkCoreUpdate, _validateCandidate, _installValidated, _testRollback, _copyDiagnostics, _about
         })
             b.Enabled = !busy;
 
@@ -2090,3 +3400,10 @@ rules:
         return trimmed.Length <= 500 ? trimmed : trimmed[..500] + "...";
     }
 }
+
+
+
+
+
+
+
