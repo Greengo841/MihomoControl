@@ -2910,13 +2910,41 @@ rules:
         if (answer != DialogResult.Yes)
             return;
 
+        string modeBeforeRemove = ReadMode();
+
+        if (modeBeforeRemove is not ("proxy" or "tun" or "off"))
+        {
+            MessageBox.Show(
+                $"Current mode is invalid: {modeBeforeRemove}. Provider removal is blocked.",
+                "Remove subscription",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         SetBusy(true, $"Removing {providerName}...");
 
         try
         {
             await RemoveSubscriptionAsync(providerName);
+
+            if (modeBeforeRemove != "off")
+            {
+                _subscriptionInfo.Text =
+                    $"Provider removed — reloading {modeBeforeRemove.ToUpperInvariant()} runtime...";
+
+                await ReloadRuntimeAfterSubscriptionApplyAsync(
+                    modeBeforeRemove);
+            }
+
             await RefreshSubscriptionsAsync();
             await RefreshServersAsync();
+            await RefreshLocalStateOnlyAsync();
+
+            _subscriptionInfo.Text =
+                modeBeforeRemove == "off"
+                    ? $"Remove PASS — provider '{providerName}' removed"
+                    : $"Remove PASS — provider '{providerName}' removed and runtime reloaded";
         }
         catch (Exception ex)
         {
