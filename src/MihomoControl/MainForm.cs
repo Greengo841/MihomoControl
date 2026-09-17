@@ -518,7 +518,7 @@ public sealed class MainForm : Form
         _subscriptionsGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
             Name = "Name",
-            HeaderText = "Subscription",
+            HeaderText = "Provider",
             FillWeight = 60F,
             MinimumWidth = 260
         });
@@ -526,7 +526,7 @@ public sealed class MainForm : Form
         var serversColumn = new DataGridViewTextBoxColumn
         {
             Name = "Servers",
-            HeaderText = "Servers",
+            HeaderText = "Nodes",
             FillWeight = 20F,
             MinimumWidth = 100
         };
@@ -537,7 +537,7 @@ public sealed class MainForm : Form
         var onlineColumn = new DataGridViewTextBoxColumn
         {
             Name = "Online",
-            HeaderText = "Online",
+            HeaderText = "Available",
             FillWeight = 20F,
             MinimumWidth = 100
         };
@@ -2499,7 +2499,7 @@ rules:
                 _subscriptionsGrid.Rows.Add(
                     provider.Name,
                     provider.ProxyCount,
-                    provider.AliveCount);
+                    $"{provider.AliveCount} / {provider.ProxyCount}");
             }
 
             bool selected = _subscriptionsGrid.SelectedRows.Count == 1;
