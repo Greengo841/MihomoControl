@@ -545,6 +545,14 @@ public sealed class MainForm : Form
             DataGridViewContentAlignment.MiddleRight;
         _subscriptionsGrid.Columns.Add(onlineColumn);
 
+        _subscriptionsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "State",
+            HeaderText = "State",
+            FillWeight = 20F,
+            MinimumWidth = 100
+        });
+
         _subscriptionsGrid.SelectionChanged += (_, _) =>
         {
             bool selected = _subscriptionsGrid.SelectedRows.Count == 1;
@@ -2496,10 +2504,20 @@ rules:
 
             foreach (var provider in providers)
             {
+                string state =
+                    provider.ProxyCount == 0
+                        ? "Empty"
+                        : provider.AliveCount == provider.ProxyCount
+                            ? "Healthy"
+                            : provider.AliveCount > 0
+                                ? "Partial"
+                                : "Offline";
+
                 _subscriptionsGrid.Rows.Add(
                     provider.Name,
                     provider.ProxyCount,
-                    $"{provider.AliveCount} / {provider.ProxyCount}");
+                    $"{provider.AliveCount} / {provider.ProxyCount}",
+                    state);
             }
 
             bool selected = _subscriptionsGrid.SelectedRows.Count == 1;
