@@ -442,6 +442,18 @@ public sealed class MainForm : Form
         });
 
 
+        _serversGrid.Columns["Subscription"]!.HeaderText = "Provider";
+        _serversGrid.Columns["Server"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _serversGrid.Columns["Server"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _serversGrid.Columns["Subscription"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _serversGrid.Columns["Subscription"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _serversGrid.Columns["Protocol"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _serversGrid.Columns["Protocol"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _serversGrid.Columns["Ping"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _serversGrid.Columns["Ping"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _serversGrid.Columns["Status"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _serversGrid.Columns["Status"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+
         _serversGrid.SelectionChanged += (_, _) =>
         {
             _useSelectedServer.Enabled =
@@ -552,6 +564,15 @@ public sealed class MainForm : Form
             FillWeight = 20F,
             MinimumWidth = 100
         });
+
+        _subscriptionsGrid.Columns["Name"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _subscriptionsGrid.Columns["Name"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _subscriptionsGrid.Columns["Servers"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns["Servers"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns["Online"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns["Online"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _subscriptionsGrid.Columns["State"]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _subscriptionsGrid.Columns["State"]!.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
 
         _subscriptionsGrid.SelectionChanged += (_, _) =>
         {
