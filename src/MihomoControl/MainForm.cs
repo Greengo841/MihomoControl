@@ -435,7 +435,7 @@ public sealed class MainForm : Form
         _serversGrid.Columns.Add(new DataGridViewTextBoxColumn
         {
             Name = "Status",
-            HeaderText = "Status",
+            HeaderText = "State",
             DataPropertyName = "Status",
             FillWeight = 14F,
             MinimumWidth = 90
@@ -982,6 +982,7 @@ public sealed class MainForm : Form
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         grid.RowHeadersVisible = false;
         grid.AutoGenerateColumns = false;
+        grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
 
         grid.BackgroundColor = SystemColors.Window;
         grid.BorderStyle = BorderStyle.FixedSingle;
@@ -2966,6 +2967,10 @@ rules:
         try
         {
             var servers = await ReadServersAsync();
+            string selectionMode = ReadServerSelectionMode();
+            string? manualServer = selectionMode == "manual" ? ReadManualServer() : null;
+            string activeServer = await ReadActiveNodeAsync();
+
 
             if (!_showOffline.Checked)
                 servers = servers.Where(x => x.Alive).ToList();
@@ -2974,16 +2979,22 @@ rules:
 
             foreach (var server in servers)
             {
+                string state =
+                    selectionMode == "manual" && string.Equals(server.Name, manualServer, StringComparison.Ordinal)
+                        ? "Manual"
+                        : string.Equals(server.Name, activeServer, StringComparison.Ordinal)
+                            ? "Active"
+                            : server.Alive ? "Online" : "Offline";
+
                 _serversGrid.Rows.Add(
                     server.Name,
                     server.Provider,
                     server.Type,
                     server.Delay > 0 ? $"{server.Delay} ms" : "—",
-                    server.Alive ? "Online" : "Offline");
-    
+                    state);
+            }
             RefreshServerSelectionInfo();
             _useSelectedServer.Enabled = !_busy && _serversGrid.SelectedRows.Count == 1;
-        }
         }
         catch (Exception ex)
         {
@@ -3406,11 +3417,3 @@ rules:
         return trimmed.Length <= 500 ? trimmed : trimmed[..500] + "...";
     }
 }
-
-
-
-
-
-
-
-
