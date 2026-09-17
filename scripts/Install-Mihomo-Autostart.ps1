@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $startScript = "C:\Mihomo\scripts\Start-Mihomo.ps1"
 $watchScript = "C:\Mihomo\scripts\Watch-Mihomo.ps1"
 $pwsh = (Get-Command pwsh.exe -ErrorAction Stop).Source
-$healthScript = "C:\Mihomo\scripts\Update-ProviderHealthPool.ps1"
+$healthScript = "C:\Mihomo\scripts\Update-ProviderHealthPool-Hidden.vbs"
 
 foreach($p in @($startScript,$watchScript,$healthScript)) {
     if (-not (Test-Path $p)) { throw "Missing: $p" }
@@ -45,11 +45,11 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 
-$healthAction = New-ScheduledTaskAction -Execute $pwsh `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$healthScript`""
+$healthAction = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\wscript.exe" `
+    -Argument "`"$healthScript`""
 $healthTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 $healthSettings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -MultipleInstances IgnoreNew `
