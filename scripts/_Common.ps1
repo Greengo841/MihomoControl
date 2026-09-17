@@ -97,21 +97,203 @@ function Wait-ProviderReady([int]$TimeoutSeconds = 120) {
     return $false
 }
 
+function Get-ProviderHealthPoolState {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ProviderName,
+
+        [ValidateRange(1,1440)]
+        [int]$MaxAgeMinutes = 15
+    )
+
+    try {
+        $stateRoot = Join-Path $Base 'state\provider-health'
+        $safeName = $ProviderName -replace '[^A-Za-z0-9._-]', '_'
+        $path = Join-Path $stateRoot "$safeName.json"
+
+        if (-not (Test-Path -LiteralPath $path)) {
+            return $null
+        }
+
+        $state =
+            Get-Content -LiteralPath $path -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+
+        if ($null -eq $state) {
+            return $null
+        }
+
+        if ([int]$state.schemaVersion -ne 1) {
+            return $null
+        }
+
+        if ([string]$state.provider -cne $ProviderName) {
+            return $null
+        }
+
+        $timestamp = $state.lastFastCheckUtc
+
+        if ($null -eq $timestamp) {
+            return $null
+        }
+
+        if ($timestamp -is [DateTimeOffset]) {
+            $updated = [DateTimeOffset]$timestamp
+        }
+        elseif ($timestamp -is [DateTime]) {
+            $updated = [DateTimeOffset]([DateTime]$timestamp)
+        }
+        else {
+            $updated = [DateTimeOffset]::MinValue
+
+            $parsed = [DateTimeOffset]::TryParse(
+                [string]$timestamp,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$updated)
+
+            if (-not $parsed) {
+                return $null
+            }
+        }
+
+        $updated = $updated.ToUniversalTime()
+        $ageMinutes =
+            ([DateTimeOffset]::UtcNow - $updated).TotalMinutes
+
+        if ($ageMinutes -lt -5 -or
+            $ageMinutes -gt $MaxAgeMinutes)
+        {
+            return $null
+        }
+
+        $names = @(
+            @($state.fastPool) |
+                ForEach-Object { [string]$_.name } |
+                Where-Object {
+                    -not [string]::IsNullOrWhiteSpace($_)
+                } |
+                Sort-Object -Unique
+        )
+
+        if ($names.Count -eq 0) {
+            return $null
+        }
+
+        return [pscustomobject]@{
+            Provider    = $ProviderName
+            Path        = $path
+            UpdatedUtc  = $updated.ToString('o')
+            AgeMinutes  = [Math]::Round($ageMinutes, 2)
+            Count       = $names.Count
+            Names       = $names
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-ProviderHealthPoolCandidates {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$ProviderName
+    )
+
+    $state = Get-ProviderHealthPoolState -ProviderName $ProviderName
+
+    if ($null -eq $state) {
+        return $null
+    }
+
+    try {
+        $raw =
+            Get-Content -LiteralPath $state.Path -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+
+        $rows = @(
+            @($raw.fastPool) |
+                Where-Object {
+                    -not [string]::IsNullOrWhiteSpace([string]$_.name) -and
+                    $null -ne $_.delay -and
+                    [int]$_.delay -gt 0
+                } |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        Provider = $ProviderName
+                        Name     = [string]$_.name
+                        Delay    = [int]$_.delay
+                    }
+                } |
+                Sort-Object Delay,Name
+        )
+
+        if ($rows.Count -eq 0) {
+            return $null
+        }
+
+        return $rows
+    }
+    catch {
+        return $null
+    }
+}
+
 function Get-RankedCandidates {
     $providers = (Get-SubscriptionProvider).providers
     if ($null -eq $providers) { throw "No proxy providers are ready." }
 
     $rows = foreach ($providerProp in $providers.PSObject.Properties) {
         $providerName = [string]$providerProp.Name
+        if ($providerName -eq 'default') { continue }
+
         $p = $providerProp.Value
         if ($null -eq $p) { continue }
 
-        foreach ($node in @($p.proxies)) {
+        $providerNodes = @($p.proxies)
+
+        if ($providerNodes.Count -gt 50) {
+            $poolRows = @(
+                Get-ProviderHealthPoolCandidates `
+                    -ProviderName $providerName
+            )
+
+            if ($poolRows.Count -gt 0) {
+                $currentNames = @(
+                    $providerNodes |
+                        ForEach-Object { [string]$_.name }
+                )
+
+                $validPoolRows = @(
+                    $poolRows |
+                        Where-Object {
+                            $currentNames -contains $_.Name
+                        }
+                )
+
+                if ($validPoolRows.Count -gt 0) {
+                    foreach ($row in $validPoolRows) {
+                        $row
+                    }
+
+                    continue
+                }
+            }
+        }
+
+        foreach ($node in $providerNodes) {
             if (-not $node.alive) { continue }
+
             $history = @($node.history)
             if ($history.Count -eq 0) { continue }
+
             $last = $history[-1]
-            if ($null -eq $last.delay -or [int]$last.delay -le 0) { continue }
+
+            if ($null -eq $last.delay -or
+                [int]$last.delay -le 0)
+            {
+                continue
+            }
 
             [pscustomobject]@{
                 Provider = $providerName
