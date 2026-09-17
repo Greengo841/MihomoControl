@@ -11,7 +11,7 @@ param(
     [ValidateRange(1,16)]
     [int]$ThrottleLimit = 4,
     [ValidateRange(1,500)]
-    [int]$FastPoolLimit = 50,
+    [int]$FastPoolLimit = 10,
     [switch]$ForceDiscovery
 )
 
