@@ -992,6 +992,9 @@ public sealed class MainForm : Form
         grid.AutoGenerateColumns = false;
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
 
+        grid.ColumnAdded += (_, e) =>
+            e.Column.SortMode = DataGridViewColumnSortMode.NotSortable;
+
         grid.BackgroundColor = SystemColors.Window;
         grid.BorderStyle = BorderStyle.FixedSingle;
         grid.CellBorderStyle =
