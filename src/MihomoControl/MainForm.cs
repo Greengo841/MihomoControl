@@ -1962,6 +1962,55 @@ public sealed class MainForm : Form
         return providerName;
     }
 
+    private static bool ProviderExistsInConfig(
+        string path,
+        string providerName)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        bool inProviders = false;
+        string providerPattern =
+            @"^\s{2}" +
+            Regex.Escape(providerName) +
+            @":\s*(?:#.*)?$";
+
+        foreach (string line in File.ReadLines(path))
+        {
+            if (!inProviders)
+            {
+                if (string.Equals(
+                        line.Trim(),
+                        "proxy-providers:",
+                        StringComparison.Ordinal))
+                {
+                    inProviders = true;
+                }
+
+                continue;
+            }
+
+            if (line.Length > 0 &&
+                !char.IsWhiteSpace(line[0]))
+            {
+                break;
+            }
+
+            if (Regex.IsMatch(line, providerPattern))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ProviderAlreadyConfigured(
+        string providerName)
+    {
+        return
+            ProviderExistsInConfig(ConfigFile, providerName) ||
+            ProviderExistsInConfig(TunConfigFile, providerName);
+    }
+
     private async Task PasteInputAsync()
     {
         if (!Clipboard.ContainsText())
@@ -2339,82 +2388,109 @@ rules:
 
     private async Task ApplyPendingAsync()
     {
-        if (string.IsNullOrWhiteSpace(_pendingText) || !_apply.Enabled)
+        if (string.IsNullOrWhiteSpace(_pendingText) ||
+            !_pendingImportValidated)
+        {
             return;
+        }
 
-        SetBusy(true, "Applying subscription...");
+        string providerName;
 
         try
         {
-            if (DetectInputType(_pendingText) != "Subscription URL")
-                throw new InvalidOperationException("Apply currently persists URL subscriptions only.");
+            providerName = GetProviderNameForImport();
 
-            string url = _pendingText.Trim();
-            var normalized = await NormalizeInputAsync(url);
-
-            if (string.IsNullOrWhiteSpace(normalized.content))
-                throw new InvalidOperationException("Subscription content is empty.");
-
-            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            string backupDir = Path.Combine(BaseDir, "backups", "subscription-" + stamp);
-            Directory.CreateDirectory(backupDir);
-
-            BackupIfExists(SubscriptionFile, backupDir);
-            BackupIfExists(ConfigFile, backupDir);
-            BackupIfExists(TunConfigFile, backupDir);
-            BackupIfExists(TemplateFile, backupDir);
-
-            File.WriteAllText(SubscriptionFile, url + Environment.NewLine, Encoding.UTF8);
-
-            ReplaceSubscriptionUrlInConfig(ConfigFile, url);
-            ReplaceSubscriptionUrlInConfig(TunConfigFile, url);
-            ReplaceSubscriptionUrlInConfig(TemplateFile, url);
-
-            var cfg = await RunProcessCaptureAsync(MihomoExe, $"-t -d \"{BaseDir}\" -f \"{ConfigFile}\"", false);
-            var tun = await RunProcessCaptureAsync(MihomoExe, $"-t -d \"{BaseDir}\" -f \"{TunConfigFile}\"", false);
-
-            if (cfg.exitCode != 0 || tun.exitCode != 0)
+            if (ProviderAlreadyConfigured(providerName))
             {
-                RestoreBackup(backupDir);
-
-                string details =
-                    (cfg.exitCode != 0 ? cfg.stderr + "\n" + cfg.stdout : "") +
-                    (tun.exitCode != 0 ? tun.stderr + "\n" + tun.stdout : "");
-
                 throw new InvalidOperationException(
-                    "Validation failed. Previous configuration restored.\n\n" + TrimForMessage(details));
+                    $"Provider '{providerName}' already exists. Choose another name.");
             }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.Message,
+                "Add provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
 
-            string modeBeforeApply = ReadMode();
+        string modeBeforeApply = ReadMode();
+        string? inputFile = null;
+        bool providerApplied = false;
+
+        SetBusy(true, $"Adding {providerName}...");
+
+        try
+        {
+            inputFile = WriteImportTempFile(_pendingText);
+
+            using var doc =
+                await RunImportSubscriptionActionAsync(
+                    "Apply",
+                    providerName,
+                    inputFile);
+
+            var root = doc.RootElement;
+
+            bool success =
+                root.TryGetProperty("success", out var successElement) &&
+                successElement.ValueKind == JsonValueKind.True;
+
+            string message =
+                root.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString() ?? "Provider apply finished."
+                    : "Provider apply finished.";
+
+            if (!success)
+                throw new InvalidOperationException(message);
+
+            providerApplied = true;
 
             try
             {
-                _subscriptionInfo.Text = $"Config updated — reloading {modeBeforeApply.ToUpperInvariant()} runtime...";
-                await ReloadRuntimeAfterSubscriptionApplyAsync(modeBeforeApply);
-
                 if (modeBeforeApply != "off")
                 {
-                    await UpdateProviderNowAsync();
+                    _subscriptionInfo.Text =
+                        $"Provider added — reloading {modeBeforeApply.ToUpperInvariant()} runtime...";
+
+                    await ReloadRuntimeAfterSubscriptionApplyAsync(
+                        modeBeforeApply);
                 }
+
+                await RefreshSubscriptionsAsync();
+                await RefreshServersAsync();
+                await RefreshLocalStateOnlyAsync();
+
+                _pendingText = null;
+                _pendingImportValidated = false;
+                _providerNameInput.Clear();
 
                 _subscriptionInfo.Text =
                     modeBeforeApply == "off"
-                        ? $"Apply PASS — source: {new Uri(url).Host}; will load on next start"
-                        : $"Apply PASS — source: {new Uri(url).Host}; runtime reloaded";
+                        ? $"Apply PASS — provider '{providerName}' added; it will load on next start"
+                        : $"Apply PASS — provider '{providerName}' added and runtime reloaded";
+
+                _operationValue.Text = "Ready";
             }
             catch
             {
-                // Runtime did not accept the new subscription/config.
-                // Restore the complete file backup and return to the previous runtime mode.
-                RestoreBackup(backupDir);
+                if (providerApplied)
+                {
+                    try
+                    {
+                        await RemoveSubscriptionAsync(providerName);
 
-                try
-                {
-                    await ReloadRuntimeAfterSubscriptionApplyAsync(modeBeforeApply);
-                }
-                catch
-                {
-                    // Preserve the original runtime-apply exception below.
+                        if (modeBeforeApply != "off")
+                        {
+                            await ReloadRuntimeAfterSubscriptionApplyAsync(
+                                modeBeforeApply);
+                        }
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 throw;
@@ -2422,10 +2498,25 @@ rules:
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Apply subscription", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(
+                ex.Message,
+                "Add provider",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
         }
         finally
         {
+            if (!string.IsNullOrWhiteSpace(inputFile))
+            {
+                try
+                {
+                    File.Delete(inputFile);
+                }
+                catch
+                {
+                }
+            }
+
             SetBusy(false, "Ready");
         }
     }
