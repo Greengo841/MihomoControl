@@ -326,7 +326,7 @@ $summaries = foreach ($providerProperty in $providers) {
     else {
         $discoveredAlive = @($previous.discoveredAlive)
         $fastPool = $aliveResults
-        $lastDiscoveryUtc = [string]$previous.lastDiscoveryUtc
+        $lastDiscoveryUtc = if ($previous.lastDiscoveryUtc -is [DateTime]) { ([DateTimeOffset]([DateTime]$previous.lastDiscoveryUtc)).ToUniversalTime().ToString('o') } elseif ($previous.lastDiscoveryUtc -is [DateTimeOffset]) { ([DateTimeOffset]$previous.lastDiscoveryUtc).ToUniversalTime().ToString('o') } else { $parsed=[DateTimeOffset]::MinValue; if (-not [DateTimeOffset]::TryParse([string]$previous.lastDiscoveryUtc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind,[ref]$parsed)) { throw 'Invalid lastDiscoveryUtc in provider health state.' }; $parsed.ToUniversalTime().ToString('o') }
     }
 
     $state = [ordered]@{

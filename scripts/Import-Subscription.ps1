@@ -493,7 +493,8 @@ function Set-SubscriptionProviderBlock {
         [ValidateSet('http','file')][string]$ProviderType,
         [string]$Url,
         [string]$Path,
-        [string]$ProviderName
+        [string]$ProviderName,
+        [bool]$HealthCheckEnabled = $true
     )
 
     $lines = [System.Collections.Generic.List[string]]::new()
@@ -527,7 +528,7 @@ function Set-SubscriptionProviderBlock {
         $block.Add("    path: $Path")
         $block.Add('    proxy: DIRECT')
         $block.Add('    health-check:')
-        $block.Add('      enable: true')
+        $block.Add("      enable: $($HealthCheckEnabled.ToString().ToLowerInvariant())")
         $block.Add('      interval: 300')
         $block.Add('      url: https://www.gstatic.com/generate_204')
 
@@ -657,11 +658,15 @@ function Apply-Source {
     $backup = Backup-CurrentState
 
     try {
+        $healthCheckEnabled =
+            $null -eq $Tested.NodeCount -or
+            [int]$Tested.NodeCount -le 50
+
         if ($Tested.SourceType -eq 'URL' -and $Tested.RemoteContentType -notin @('URI','Base64')) {
             $url = $OriginalText.Trim()
             foreach ($cfg in $ConfigFiles) {
                 $old = [IO.File]::ReadAllText($cfg)
-                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType http -Url $url -Path "./providers/$ProviderName.yaml" -ProviderName $ProviderName
+                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType http -Url $url -Path "./providers/$ProviderName.yaml" -ProviderName $ProviderName -HealthCheckEnabled $healthCheckEnabled
                 Write-Utf8NoBom $cfg $new
             }
             Write-Utf8NoBom $SubscriptionFile ($url + "`r`n")
@@ -669,7 +674,7 @@ function Apply-Source {
             Write-Utf8NoBom $LocalProviderFile $Tested.ProviderContent
             foreach ($cfg in $ConfigFiles) {
                 $old = [IO.File]::ReadAllText($cfg)
-                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType file -Url '' -Path "./providers/$ProviderName-local.txt" -ProviderName $ProviderName
+                $new = Set-SubscriptionProviderBlock -Text $old -ProviderType file -Url '' -Path "./providers/$ProviderName-local.txt" -ProviderName $ProviderName -HealthCheckEnabled $healthCheckEnabled
                 Write-Utf8NoBom $cfg $new
             }
             if ($Tested.SourceType -eq 'URL') { Write-Utf8NoBom $SubscriptionFile ($OriginalText.Trim() + "`r`n") } else { Write-Utf8NoBom $SubscriptionFile ("file:providers/$ProviderName-local.txt`r`n") }
