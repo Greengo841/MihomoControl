@@ -44,6 +44,7 @@ public sealed class MainForm : Form
     private readonly Label _watchdogValue = new();
     private readonly Label _operationValue = new();
     private readonly Label _subscriptionInfo = new();
+    private readonly TextBox _providerNameInput = new();
 
     private readonly Label _installedVersion = new();
     private readonly Label _latestVersion = new();
@@ -583,37 +584,63 @@ public sealed class MainForm : Form
 
         subscriptionsLayout.Controls.Add(_subscriptionsGrid, 0, 2);
 
-        var importCard = new TableLayoutPanel
+        var addProviderSection = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             ColumnCount = 1,
-            RowCount = 4,
-            Padding = new Padding(18),
-            Margin = new Padding(0),
-            BorderStyle = BorderStyle.FixedSingle,
-            BackColor = SystemColors.Window
+            RowCount = 5,
+            Padding = new Padding(0, 18, 0, 0),
+            Margin = new Padding(0)
         };
 
-        importCard.Controls.Add(
-            CreateSectionTitle("Add subscription"),
+        addProviderSection.Controls.Add(
+            CreateSectionTitle("Add provider"),
             0,
             0);
 
         var subscriptionHint = new Label
         {
-            Text = "Paste a subscription locally, test it, then apply the validated configuration.",
+            Text = "Add another provider from a subscription URL or native Mihomo provider content.",
             AutoSize = true,
             ForeColor = SystemColors.GrayText,
             Margin = new Padding(0, 2, 0, 14)
         };
-        importCard.Controls.Add(subscriptionHint, 0, 1);
+        addProviderSection.Controls.Add(subscriptionHint, 0, 1);
 
-        _subscriptionInfo.Text = "No pending import";
+        var providerNameRow = new TableLayoutPanel
+        {
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 0, 0, 12)
+        };
+        providerNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        providerNameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260F));
+
+        var providerNameLabel = new Label
+        {
+            Text = "Provider",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 7, 12, 0)
+        };
+
+        _providerNameInput.Width = 240;
+        _providerNameInput.PlaceholderText = "e.g. work, backup, mobile";
+        _providerNameInput.Margin = new Padding(0, 2, 0, 0);
+
+        providerNameRow.Controls.Add(providerNameLabel, 0, 0);
+        providerNameRow.Controls.Add(_providerNameInput, 1, 0);
+        addProviderSection.Controls.Add(providerNameRow, 0, 2);
+
+        _subscriptionInfo.Text = "No source pasted";
         _subscriptionInfo.AutoSize = true;
         _subscriptionInfo.Dock = DockStyle.Fill;
-        _subscriptionInfo.Margin = new Padding(0, 0, 0, 16);
-        importCard.Controls.Add(_subscriptionInfo, 0, 2);
+        _subscriptionInfo.ForeColor = SystemColors.GrayText;
+        _subscriptionInfo.Margin = new Padding(0, 0, 0, 12);
+        addProviderSection.Controls.Add(_subscriptionInfo, 0, 3);
 
         var subscriptionActions = new FlowLayoutPanel
         {
@@ -646,8 +673,8 @@ public sealed class MainForm : Form
         subscriptionActions.Controls.Add(_test);
         subscriptionActions.Controls.Add(_apply);
 
-        importCard.Controls.Add(subscriptionActions, 0, 3);
-        subscriptionsLayout.Controls.Add(importCard, 0, 3);
+        addProviderSection.Controls.Add(subscriptionActions, 0, 4);
+        subscriptionsLayout.Controls.Add(addProviderSection, 0, 3);
 
         // MAINTENANCE
 
