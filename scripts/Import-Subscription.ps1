@@ -738,31 +738,253 @@ function Remove-Source {
         throw
     }
 }
+function Get-ProviderConfigInfo {
+    param([string]$ProviderName)
+
+    if (-not (Test-Path -LiteralPath $ConfigFiles[0])) {
+        throw 'config.yaml was not found.'
+    }
+
+    $lines = Get-Content -LiteralPath $ConfigFiles[0]
+
+    $root = -1
+    for ($i=0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^proxy-providers:\s*$') {
+            $root = $i
+            break
+        }
+    }
+
+    if ($root -lt 0) {
+        throw 'proxy-providers section was not found.'
+    }
+
+    $start = -1
+    for ($i=$root+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S') { break }
+
+        if ($lines[$i] -match ('^  ' + [regex]::Escape($ProviderName) + ':\s*$')) {
+            $start = $i
+            break
+        }
+    }
+
+    if ($start -lt 0) {
+        return $null
+    }
+
+    $type = $null
+    $path = $null
+
+    for ($i=$start+1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\S' -or
+            $lines[$i] -match '^  \S[^:]*:\s*$')
+        {
+            break
+        }
+
+        if ($lines[$i] -match '^\s{4}type:\s*(\S+)\s*$') {
+            $type = $Matches[1].Trim()
+            continue
+        }
+
+        if ($lines[$i] -match '^\s{4}path:\s*(.+?)\s*$') {
+            $path = $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($type)) {
+        throw "Provider '$ProviderName' has no type."
+    }
+
+    return [pscustomobject]@{
+        Name = $ProviderName
+        Type = $type
+        Path = $path
+    }
+}
+
+function Invoke-ProviderApiReload {
+    param(
+        [System.Net.Http.HttpClient]$Client,
+        [string]$ApiUrl
+    )
+
+    $content = [System.Net.Http.StringContent]::new('')
+    $response = $Client.PutAsync($ApiUrl, $content).GetAwaiter().GetResult()
+
+    if (-not $response.IsSuccessStatusCode) {
+        return [pscustomobject]@{
+            Success   = $false
+            Message   = "Provider update returned HTTP $([int]$response.StatusCode)."
+            NodeCount = $null
+        }
+    }
+
+    $info = $Client.GetStringAsync($ApiUrl).GetAwaiter().GetResult()
+    $doc = $info | ConvertFrom-Json -Depth 100
+    $count = if ($null -ne $doc.proxies) {
+        @($doc.proxies).Count
+    }
+    else {
+        $null
+    }
+
+    return [pscustomobject]@{
+        Success   = $true
+        Message   = 'Provider updated by the running Mihomo core.'
+        NodeCount = $count
+    }
+}
+
 function Invoke-ProviderUpdate {
     if (-not (Get-Process -Name 'mihomo' -ErrorAction SilentlyContinue)) {
-        return [pscustomobject]@{ Success=$false; Message='Mihomo is stopped. Start Proxy or TUN first.'; NodeCount=$null }
+        return [pscustomobject]@{
+            Success   = $false
+            Message   = 'Mihomo is stopped. Start Proxy or TUN first.'
+            NodeCount = $null
+        }
+    }
+
+    $provider = Get-ProviderConfigInfo -ProviderName $ProviderName
+    if ($null -eq $provider) {
+        return [pscustomobject]@{
+            Success   = $false
+            Message   = 'Provider was not found in config.yaml.'
+            NodeCount = $null
+        }
     }
 
     $handler = [System.Net.Http.HttpClientHandler]::new()
     $handler.UseProxy = $false
     $client = [System.Net.Http.HttpClient]::new($handler)
+
     try {
         $client.Timeout = [TimeSpan]::FromSeconds(20)
+
         $encoded = [Uri]::EscapeDataString($ProviderName)
-        $url = "http://127.0.0.1:9090/providers/proxies/$encoded"
-        $content = [System.Net.Http.StringContent]::new('')
-        $response = $client.PutAsync($url, $content).GetAwaiter().GetResult()
-        if (-not $response.IsSuccessStatusCode) {
-            return [pscustomobject]@{ Success=$false; Message="Provider update returned HTTP $([int]$response.StatusCode)."; NodeCount=$null }
+        $apiUrl = "http://127.0.0.1:9090/providers/proxies/$encoded"
+
+        if ([string]$provider.Type -ieq 'http') {
+            return Invoke-ProviderApiReload -Client $client -ApiUrl $apiUrl
         }
 
-        $info = $client.GetStringAsync($url).GetAwaiter().GetResult()
-        $doc = $info | ConvertFrom-Json -Depth 100
-        $count = if ($null -ne $doc.proxies) { @($doc.proxies).Count } else { $null }
-        return [pscustomobject]@{ Success=$true; Message='Provider updated by the running Mihomo core.'; NodeCount=$count }
-    } catch {
-        return [pscustomobject]@{ Success=$false; Message='Could not update the running provider.'; NodeCount=$null }
-    } finally {
+        if ([string]$provider.Type -ine 'file') {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = "Unsupported provider type: $($provider.Type)."
+                NodeCount = $null
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $SubscriptionFile)) {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = 'The saved source for this file provider was not found.'
+                NodeCount = $null
+            }
+        }
+
+        $savedSource = [IO.File]::ReadAllText($SubscriptionFile).Trim()
+
+        if (-not (Test-IsHttpUrl $savedSource)) {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = 'This file provider has no saved HTTP subscription URL.'
+                NodeCount = $null
+            }
+        }
+
+        $expectedRelativePath = "./providers/$ProviderName-local.txt"
+        $configuredPath = ([string]$provider.Path).Replace('\','/')
+
+        if ($configuredPath -ne $expectedRelativePath) {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = 'The file provider path is not managed by Mihomo Control.'
+                NodeCount = $null
+            }
+        }
+
+        $tested = Test-InputSource $savedSource
+
+        if (-not $tested.Success) {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = "Subscription refresh validation failed: $($tested.Message)"
+                NodeCount = $tested.NodeCount
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $LocalProviderFile)) {
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = 'The current local provider file was not found.'
+                NodeCount = $null
+            }
+        }
+
+        $oldBytes = [IO.File]::ReadAllBytes($LocalProviderFile)
+        $tempFile = "$LocalProviderFile.update-$([guid]::NewGuid().ToString('N')).tmp"
+
+        try {
+            Write-Utf8NoBom $tempFile $tested.ProviderContent
+            [IO.File]::Move($tempFile, $LocalProviderFile, $true)
+
+            $reload = Invoke-ProviderApiReload -Client $client -ApiUrl $apiUrl
+
+            if (-not $reload.Success) {
+                [IO.File]::WriteAllBytes($LocalProviderFile, $oldBytes)
+
+                try {
+                    [void](Invoke-ProviderApiReload -Client $client -ApiUrl $apiUrl)
+                }
+                catch {}
+
+                return [pscustomobject]@{
+                    Success   = $false
+                    Message   = 'Provider reload failed; the previous local provider file was restored.'
+                    NodeCount = $null
+                }
+            }
+
+            return [pscustomobject]@{
+                Success   = $true
+                Message   = 'URL-backed file provider downloaded, validated, replaced, and reloaded.'
+                NodeCount = $reload.NodeCount
+            }
+        }
+        catch {
+            if (Test-Path -LiteralPath $tempFile) {
+                Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+            }
+
+            if ($null -ne $oldBytes) {
+                try {
+                    [IO.File]::WriteAllBytes($LocalProviderFile, $oldBytes)
+                    [void](Invoke-ProviderApiReload -Client $client -ApiUrl $apiUrl)
+                }
+                catch {}
+            }
+
+            return [pscustomobject]@{
+                Success   = $false
+                Message   = 'Could not replace the local provider; the previous file was restored.'
+                NodeCount = $null
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Success   = $false
+            Message   = 'Could not update the running provider.'
+            NodeCount = $null
+        }
+    }
+    finally {
         $client.Dispose()
         $handler.Dispose()
     }
